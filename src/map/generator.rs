@@ -1,28 +1,26 @@
 use std::collections::HashMap;
 
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{rngs::SmallRng, Rng};
 
 use super::model::{MapType, Sector, SectorType};
 
 pub struct MapGenerator {
-    seed: u64,
+    // seed
     rng: SmallRng,
     map_type: MapType,
 
-    rest_index: Vec<u32>,
+    rest_index: Vec<usize>,
     temp: HashMap<SectorType, Vec<Sector>>,
 }
 
 impl MapGenerator {
-    pub fn new(seed: u64, map_type: &MapType) -> Self {
-        let rng = SmallRng::seed_from_u64(seed);
+    pub fn new(rng: SmallRng, map_type: &MapType) -> Self {
         let rest_index = (1..=match map_type {
             MapType::Beginner => 12,
             MapType::Master => 18,
         })
             .collect();
         Self {
-            seed,
             rng,
             map_type: map_type.clone(),
             rest_index,
@@ -181,7 +179,7 @@ impl MapGenerator {
 
     fn generate_nebula_sector(
         &mut self,
-        current_nebula_index: Option<u32>,
+        current_nebula_index: Option<usize>,
     ) -> anyhow::Result<Vec<Sector>> {
         for _ in 0..RAND_TRY_TIMES {
             let (result, others) = self.try_get_pair_index()?;
@@ -272,7 +270,7 @@ impl MapGenerator {
 
     // helper functions below.
 
-    fn get_rand_rest_prime_index(&mut self) -> anyhow::Result<u32> {
+    fn get_rand_rest_prime_index(&mut self) -> anyhow::Result<usize> {
         for _ in 0..RAND_TRY_TIMES {
             let index = self.rng.random_range(1..=self.map_type.sector_count());
             if is_prime(index) && self.rest_index.contains(&index) {
@@ -283,7 +281,7 @@ impl MapGenerator {
         Err(anyhow::anyhow!("Failed to get prime index."))
     }
 
-    fn get_rest_index(&mut self) -> anyhow::Result<u32> {
+    fn get_rest_index(&mut self) -> anyhow::Result<usize> {
         if self.rest_index.is_empty() {
             return Err(anyhow::anyhow!("No more rest index."));
         }
@@ -291,7 +289,7 @@ impl MapGenerator {
         Ok(self.rest_index.remove(index))
     }
 
-    fn get_rest_pair_index(&mut self) -> anyhow::Result<(u32, u32)> {
+    fn get_rest_pair_index(&mut self) -> anyhow::Result<(usize, usize)> {
         for _ in 0..RAND_TRY_TIMES {
             if let Ok(pair) = self.try_get_pair_index() {
                 return Ok(pair);
@@ -300,7 +298,7 @@ impl MapGenerator {
         Err(anyhow::anyhow!("Failed to get pair index."))
     }
 
-    fn get_rand_range(&mut self, range_len: u32, empty_len: u32) -> anyhow::Result<Vec<u32>> {
+    fn get_rand_range(&mut self, range_len: usize, empty_len: usize) -> anyhow::Result<Vec<usize>> {
         for _ in 0..RAND_TRY_TIMES {
             let st = self.rest_index[self.rng.random_range(0..self.rest_index.len())];
             let ed = (st + range_len - 1) % self.map_type.sector_count();
@@ -349,7 +347,7 @@ impl MapGenerator {
         self.rng.random_bool(0.5)
     }
 
-    fn try_get_pair_index(&mut self) -> anyhow::Result<(u32, u32)> {
+    fn try_get_pair_index(&mut self) -> anyhow::Result<(usize, usize)> {
         let index = self.get_rest_index()?;
         let (left, right) = self.adjacent_index(index);
 
@@ -370,7 +368,7 @@ impl MapGenerator {
         Err(anyhow::anyhow!("Failed to get pair index."))
     }
 
-    fn adjacent_index(&mut self, from: u32) -> (u32, u32) {
+    fn adjacent_index(&mut self, from: usize) -> (usize, usize) {
         assert!(from > 0 && from <= self.map_type.sector_count());
         let max = self.map_type.sector_count();
 
@@ -435,7 +433,7 @@ impl MapGenerator {
 
 const RAND_TRY_TIMES: u32 = 10;
 
-fn is_prime(n: u32) -> bool {
+fn is_prime(n: usize) -> bool {
     // actually, we only need to check if n is a prime number less than 18.
     // so we can just hard code the prime numbers.
     match n {
@@ -466,18 +464,20 @@ const MASTER_TYPES: [(SectorType, u32); 6] = [
 
 #[cfg(test)]
 mod tests {
+    use rand::SeedableRng;
+
     #[allow(unused_imports)]
     use super::*;
 
     #[test]
     fn test_generator() {
         for seed in 0..100000 {
+            // let seed = 99;
             println!("Seed: {}", seed);
-            let mut g = MapGenerator::new(seed, &MapType::Master);
-            let r = g.generate_sectors();
-            // println!("{:#?}", r);
-            assert!(r.is_ok());
-            let r = r.unwrap();
+            let rng = SmallRng::seed_from_u64(seed);
+            let mut g = MapGenerator::new(rng, &MapType::Master);
+            let r = g.generate_sectors().unwrap();
+            // println!("{:?}", r);
             assert!(g.check_sectors_rules(&r));
         }
         // let mut g = MapGenerator::new(96, &MapType::Master);
