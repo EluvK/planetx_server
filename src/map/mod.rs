@@ -2,3 +2,5 @@
 mod clue;
 mod generator;
 mod model;
+
+pub use model::*;
