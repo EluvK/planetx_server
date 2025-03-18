@@ -1,4 +1,5 @@
 use rand::{distr::StandardUniform, rngs::SmallRng};
+use serde::{Deserialize, Serialize};
 
 use super::generator::MapGenerator;
 
@@ -107,7 +108,7 @@ impl MapType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SectorType {
     Comet,       // 彗星
     Asteroid,    // 小行星
