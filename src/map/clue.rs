@@ -1,14 +1,24 @@
 use core::panic;
 
-use rand::{rngs::SmallRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
+use serde::Serialize;
 
 use super::model::{SectorType, Sectors};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Clue {
     pub subject: SectorType,
     pub object: SectorType,
     pub conn: ClueConnection,
+}
+
+impl Serialize for Clue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.collect_str(&self)
+    }
 }
 
 impl std::fmt::Display for Clue {
@@ -49,7 +59,7 @@ impl Clue {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ClueConnection {
     AllAdjacent, // all
     OneAdjacent, // at least one

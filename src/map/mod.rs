@@ -4,3 +4,4 @@ mod generator;
 mod model;
 
 pub use model::*;
+pub use clue::*;

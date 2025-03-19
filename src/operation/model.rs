@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::map::SectorType;
+use crate::map::{Clue, SectorType};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +48,19 @@ pub struct DoPublishOperation {
     pub sector_type: SectorType,
 }
 
+// result
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationResult {
+    Survey(usize),
+    Target(SectorType),
+    Research(Clue), // ABCDEFX1X2
+    Locate(bool),
+    ReadyPublish(usize),
+    DoPublish((usize, SectorType)),
+}
+
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
@@ -62,5 +75,20 @@ mod tests {
         });
         let json_str = serde_json::to_string(&survey).unwrap();
         println!("{}", json_str);
+    }
+
+    #[test]
+    fn test_operation_result_json() {
+        let result = OperationResult::DoPublish((1, SectorType::Asteroid));
+        let res_str = serde_json::to_string(&result).unwrap();
+        println!("{}", res_str);
+
+        let research = OperationResult::Research(Clue {
+            subject: SectorType::Asteroid,
+            object: SectorType::DwarfPlanet,
+            conn: crate::map::ClueConnection::NotAdjacent,
+        });
+        let res_str = serde_json::to_string(&research).unwrap();
+        println!("{}", res_str);
     }
 }

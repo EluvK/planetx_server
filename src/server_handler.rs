@@ -59,9 +59,24 @@ async fn handle_op(socket: SocketRef, state: StateRef, op: Operation) {
 }
 
 async fn handle_room(socket: SocketRef, state: StateRef, op: RoomUserOperation) {
-    if state.lock().await.check_auth(socket.id.as_str()).is_none() {
-        info!(ns = "socket.io", ?socket.id, "unauthorized op {:?}", op);
+    let user = state.lock().await.check_auth(socket.id.as_str()).cloned();
+    let Some(user) = user else {
+        info!(ns = "socket.io", ?socket.id, "unauthorized room op {:?}", op);
         return;
+    };
+
+    info!(?op, ?socket.id, "received room op {:?}", op);
+
+    match state.lock().await.handle_room_op(user, op) {
+        Ok(Some(resp)) => {
+            socket.emit("room_resp", &resp).ok();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            info!(ns = "socket.io", ?socket.id, ?e, "room op error");
+            socket
+                .emit("server_resp", &format!("room op error {e}"))
+                .ok();
+        }
     }
-    info!(?op, ?socket.id, "received op {:?}", op);
 }
