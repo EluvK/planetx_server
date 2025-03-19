@@ -4,11 +4,16 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::room::{Room, RoomResp, RoomUserOperation};
+use crate::{
+    operation::{Operation, OperationResult},
+    room::{GameStateResp, Room, RoomResp, RoomUserOperation, ServerGameState},
+};
 
 pub struct State {
     pub users: HashMap<String, User>, // socket_id -> User
     pub rooms: HashMap<String, Room>, // room_id -> Room
+    pub game_state: HashMap<String, GameStateResp>,
+    pub map_data: HashMap<String, ServerGameState>, // map_seed -> map_data
 }
 
 impl State {
@@ -16,6 +21,8 @@ impl State {
         State {
             users: HashMap::new(),
             rooms: HashMap::new(),
+            game_state: HashMap::new(),
+            map_data: HashMap::new(),
         }
     }
 
@@ -25,6 +32,22 @@ impl State {
 
     pub fn check_auth(&self, socket_id: &str) -> Option<&User> {
         self.users.get(socket_id)
+    }
+
+    pub fn handle_action_op(
+        &mut self,
+        user: User,
+        operation: Operation,
+    ) -> anyhow::Result<Option<OperationResult>> {
+        todo!();
+        // match operation {
+        //     Operation::Survey(s) => Ok(Some(OperationResult::Survey(1))),
+        //     Operation::Target(t) => Ok(Some(OperationResult::Target())),
+        //     Operation::Research(r) => Ok(Some(OperationResult::Research("ABCDEFX1X2".into()))),
+        //     Operation::Locate(l) => Ok(Some(OperationResult::Locate(true))),
+        //     Operation::ReadyPublish(rp) => Ok(Some(OperationResult::ReadyPublish(1))),
+        //     Operation::DoPublish(dp) => Ok(Some(OperationResult::DoPublish((1, "space".into())))),
+        // }
     }
 
     pub fn handle_room_op(

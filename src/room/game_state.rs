@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-use crate::operation::{Operation, OperationResult};
+use crate::{
+    map::{Clue, Map},
+    operation::{Operation, OperationResult},
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GameStateResp {
     status: GameState,
     users: Vec<UserState>,
+    start_index: usize,
+    end_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +60,9 @@ impl UserLocationSequence {
     }
 }
 
-pub struct UserMove {
-    pub op: Operation,
+#[derive(Debug, Clone)]
+pub struct ServerGameState {
+    pub map: Map,
+    pub research_clues: Vec<Clue>,
+    pub x_clues: Vec<Clue>,
 }

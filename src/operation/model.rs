@@ -75,6 +75,7 @@ mod tests {
         });
         let json_str = serde_json::to_string(&survey).unwrap();
         println!("{}", json_str);
+        assert!(json_str.contains(r#""survey":{"sector_type":"space","start":1,"end":2}"#));
     }
 
     #[test]
@@ -82,6 +83,7 @@ mod tests {
         let result = OperationResult::DoPublish((1, SectorType::Asteroid));
         let res_str = serde_json::to_string(&result).unwrap();
         println!("{}", res_str);
+        assert_eq!(res_str, r#"{"do_publish":[1,"asteroid"]}"#);
 
         let research = OperationResult::Research(Clue {
             subject: SectorType::Asteroid,
@@ -90,5 +92,11 @@ mod tests {
         });
         let res_str = serde_json::to_string(&research).unwrap();
         println!("{}", res_str);
+        assert_eq!(res_str, r#"{"research":"没有 小行星 和 矮行星 相邻"}"#);
+
+        let locate = OperationResult::Locate(true);
+        let res_str = serde_json::to_string(&locate).unwrap();
+        println!("{}", res_str);
+        assert_eq!(res_str, r#"{"locate":true}"#);
     }
 }

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::generator::MapGenerator;
 
+#[derive(Clone, Debug)]
 pub struct Map {
     pub r#type: MapType,
     // pub sectors: Vec<Sector>,
@@ -93,7 +94,7 @@ impl std::fmt::Display for Sector {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MapType {
     Beginner, // 12 secotrs.
     Master,   // 18 sectors.
