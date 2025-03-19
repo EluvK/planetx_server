@@ -109,6 +109,7 @@ impl MapType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SectorType {
     Comet,       // 彗星
     Asteroid,    // 小行星
