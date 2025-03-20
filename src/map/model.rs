@@ -142,6 +142,47 @@ impl Map {
             sectors: Sectors { data: sectors },
         })
     }
+
+    pub fn size(&self) -> usize {
+        self.sectors.data.len()
+    }
+
+    pub fn survey_sector(&self, st: usize, ed: usize, object: &SectorType) -> usize {
+        self.sectors
+            .data
+            .iter()
+            .filter(|s| {
+                in_range(st, ed, s.index, self.size())
+                    && match object {
+                        SectorType::Space => {
+                            s.r#type == SectorType::Space || s.r#type == SectorType::X
+                        }
+                        _ => s.r#type == *object,
+                    }
+            })
+            .count()
+    }
+
+    pub fn target_sector(&self, index: usize) -> SectorType {
+        match &self.sectors.data[index - 1].r#type {
+            SectorType::X => SectorType::Space,
+            rest => rest.clone(),
+        }
+    }
+
+    pub fn locate_x(
+        &self,
+        index: usize,
+        pre_sector_type: &SectorType,
+        next_sector_type: &SectorType,
+    ) -> bool {
+        let sector = &self.sectors.data[index - 1];
+        let next_sector = self.sectors.next(index);
+        let pre_sector = self.sectors.prev(index);
+        sector.r#type == SectorType::X
+            && pre_sector.r#type == *pre_sector_type
+            && next_sector.r#type == *next_sector_type
+    }
 }
 
 impl rand::distr::Distribution<SectorType> for StandardUniform {
@@ -154,5 +195,54 @@ impl rand::distr::Distribution<SectorType> for StandardUniform {
             4 => SectorType::X,
             _ => SectorType::Space,
         }
+    }
+}
+
+pub fn validate_index_in_range(
+    start: usize,
+    end: usize,
+    input_st: usize,
+    input_ed: Option<usize>,
+    max: usize,
+) -> bool {
+    assert!(0 < start && start <= max);
+    assert!(0 < end && end <= max);
+
+    // is a circle from 1 to max, the input should be in the range of start to end.
+    // the input_end can be None, which means the input is a single point.
+    // or the input_end can be Some, which means the input is a range, so the input_st should be earlier than input_ed.
+    in_range(start, end, input_st, max)
+        && input_ed.map_or(true, |ed| {
+            in_range(start, end, ed, max) && in_range(input_st, end, ed, max)
+        })
+}
+
+pub fn in_range(start: usize, end: usize, input: usize, max: usize) -> bool {
+    assert!(0 < start && start <= max);
+    assert!(0 < end && end <= max);
+
+    if start < end {
+        start <= input && input <= end
+    } else {
+        (start <= input && input <= max) || (1 <= input && input <= end)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use super::*;
+
+    #[test]
+    fn test_validate_index() {
+        assert!(validate_index_in_range(1, 9, 3, None, 18));
+        assert!(validate_index_in_range(1, 9, 3, Some(4), 18));
+        assert!(!validate_index_in_range(1, 9, 3, Some(2), 18));
+        assert!(!validate_index_in_range(1, 9, 10, None, 18));
+        assert!(!validate_index_in_range(1, 9, 10, Some(11), 18));
+        assert!(!validate_index_in_range(11, 1, 10, None, 18));
+        assert!(validate_index_in_range(11, 1, 13, None, 18));
+        assert!(validate_index_in_range(11, 1, 13, Some(14), 18));
+        assert!(!validate_index_in_range(11, 1, 13, Some(12), 18));
     }
 }

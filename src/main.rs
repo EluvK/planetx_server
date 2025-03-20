@@ -28,9 +28,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(tower_http::cors::CorsLayer::permissive())
         .layer(layer);
 
-    io.ns("/xplanet", |socket, state: State<StateRef>| {
-        handle_on_connect(socket, state)
-    });
+    io.ns(
+        "/xplanet",
+        |io: SocketIo, socket, state: State<StateRef>| handle_on_connect(io, socket, state),
+    );
 
     let layer = layer.compat();
     let router = Router::with_path("/socket.io").hoop(layer).goal(hello);

@@ -23,7 +23,7 @@ pub enum RoomUserOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoomResp {
+pub struct RoomResult {
     pub room_id: String,
     pub users: Vec<RoomUser>, // user names
 }
@@ -44,9 +44,9 @@ impl From<User> for RoomUser {
         }
     }
 }
-impl From<Room> for RoomResp {
+impl From<Room> for RoomResult {
     fn from(room: Room) -> Self {
-        RoomResp {
+        RoomResult {
             room_id: room.id,
             users: room.users,
         }

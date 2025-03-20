@@ -7,10 +7,10 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GameStateResp {
-    status: GameState,
-    users: Vec<UserState>,
-    start_index: usize,
-    end_index: usize,
+    pub status: GameState,
+    pub users: Vec<UserState>,
+    pub start_index: usize,
+    pub end_index: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]

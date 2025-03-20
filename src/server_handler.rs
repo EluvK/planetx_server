@@ -3,10 +3,13 @@ use crate::{
     room::RoomUserOperation,
     server_state::{StateRef, User},
 };
-use socketioxide::extract::{Data, SocketRef, State};
+use socketioxide::{
+    SocketIo,
+    extract::{Data, SocketRef, State},
+};
 use tracing::info;
 
-pub async fn handle_on_connect(socket: SocketRef, _state: State<StateRef>) {
+pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<StateRef>) {
     // let client_id = uuid::Uuid::new_v4().to_string();
     // state
     //     .lock()
@@ -37,28 +40,47 @@ pub async fn handle_on_connect(socket: SocketRef, _state: State<StateRef>) {
 
     socket.on(
         "op",
-        |socket: SocketRef, State::<StateRef>(state), Data::<Operation>(op)| async move {
-            handle_op(socket, state, op).await;
+        |io: SocketIo,socket: SocketRef, State::<StateRef>(state), Data::<Operation>(op)| async move {
+            handle_op(io, socket, state, op).await;
         },
     );
 
     socket.on(
         "room",
-        |socket: SocketRef, State::<StateRef>(state), Data::<RoomUserOperation>(op)| async move {
-            handle_room(socket, state, op).await;
+        |io: SocketIo,
+         socket: SocketRef,
+         State::<StateRef>(state),
+         Data::<RoomUserOperation>(op)| async move {
+            handle_room(io, socket, state, op).await;
         },
     );
 }
 
-async fn handle_op(socket: SocketRef, state: StateRef, op: Operation) {
-    if state.lock().await.check_auth(socket.id.as_str()).is_none() {
-        info!(ns = "socket.io", ?socket.id, "unauthorized op {:?}", op);
+async fn handle_op(_io: SocketIo, socket: SocketRef, state: StateRef, op: Operation) {
+    let user = state.lock().await.check_auth(socket.id.as_str()).cloned();
+    let Some(user) = user else {
+        info!(ns = "socket.io", ?socket.id, "unauthorized room op {:?}", op);
         return;
-    }
+    };
+
     info!(?op, ?socket.id, "received op {:?}", op);
+
+    match state.lock().await.handle_action_op(user, op) {
+        Ok(resp) => {
+            // to the user
+            info!(ns = "socket.io", ?socket.id, ?resp, "op success");
+            socket.emit("op_result", &resp).ok();
+            // to other users in the room
+            // todo
+        }
+        Err(e) => {
+            info!(ns = "socket.io", ?socket.id, ?e, "op error");
+            socket.emit("server_resp", &format!("op error {e}")).ok();
+        }
+    }
 }
 
-async fn handle_room(socket: SocketRef, state: StateRef, op: RoomUserOperation) {
+async fn handle_room(io: SocketIo, socket: SocketRef, state: StateRef, op: RoomUserOperation) {
     let user = state.lock().await.check_auth(socket.id.as_str()).cloned();
     let Some(user) = user else {
         info!(ns = "socket.io", ?socket.id, "unauthorized room op {:?}", op);
@@ -68,10 +90,19 @@ async fn handle_room(socket: SocketRef, state: StateRef, op: RoomUserOperation) 
     info!(?op, ?socket.id, "received room op {:?}", op);
 
     match state.lock().await.handle_room_op(user, op) {
-        Ok(Some(resp)) => {
-            socket.emit("room_resp", &resp).ok();
+        Ok(resp) => {
+            for r in resp {
+                info!(ns = "socket.io", ?socket.id, ?r, "room op success");
+                // to every user in the room
+                io.of("/xplanet")
+                    .unwrap()
+                    .to(r.room_id.clone())
+                    .emit("room_result", &r)
+                    .await
+                    .ok();
+            }
         }
-        Ok(None) => {}
+
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "room op error");
             socket
