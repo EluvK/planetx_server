@@ -94,17 +94,18 @@ impl std::fmt::Display for Sector {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MapType {
-    Beginner, // 12 secotrs.
-    Master,   // 18 sectors.
+    Standard, // 12 secotrs.
+    Expert,   // 18 sectors.
 }
 
 impl MapType {
     pub const fn sector_count(&self) -> usize {
         match self {
-            MapType::Beginner => 12,
-            MapType::Master => 18,
+            MapType::Standard => 12,
+            MapType::Expert => 18,
         }
     }
 }

@@ -398,7 +398,7 @@ mod tests {
             dbg!(seed);
             let mut rng = SmallRng::seed_from_u64(seed);
             loop {
-                let map = Map::new(rng.clone(), MapType::Beginner).unwrap();
+                let map = Map::new(rng.clone(), MapType::Standard).unwrap();
                 // dbg!(&map.sectors.data);
                 let mut cg = ClueGenerator::new(seed, map.sectors.clone());
                 for sector in &map.sectors.data {

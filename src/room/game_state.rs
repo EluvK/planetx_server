@@ -13,6 +13,17 @@ pub struct GameStateResp {
     pub end_index: usize,
 }
 
+impl GameStateResp {
+    // pub fn new() -> Self {
+    //     GameStateResp {
+    //         status,
+    //         users,
+    //         start_index,
+    //         end_index,
+    //     }
+    // }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GameState {

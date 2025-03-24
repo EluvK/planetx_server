@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::{
-    map::{SectorType, validate_index_in_range},
+    map::{MapType, SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
     room::{GameStateResp, Room, RoomResult, RoomUserOperation, ServerGameState},
 };
@@ -154,13 +154,23 @@ impl State {
                 };
                 let room = Room {
                     id: rand_new_id.clone(),
-                    map_seed: rand::random(), // todo
                     users: vec![user.clone().into()],
+                    map_seed: rand::random(), // todo
+                    map_type: MapType::Standard,
                 };
                 self.rooms.insert(rand_new_id.clone(), room.clone());
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
                 results.extend(self._room_op(user, InnerRoomOp::Enter(rand_new_id)));
                 Ok(results)
+            }
+            RoomUserOperation::Edit(new_info) => {
+                let room = self
+                    .rooms
+                    .get_mut(&new_info.room_id)
+                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                room.map_seed = new_info.map_seed;
+                room.map_type = new_info.map_type;
+                Ok(vec![room.clone().into()])
             }
             RoomUserOperation::Join(id) => {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);

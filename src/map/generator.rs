@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use rand::{rngs::SmallRng, Rng};
+use rand::{Rng, rngs::SmallRng};
 
 use super::model::{MapType, Sector, SectorType};
 
@@ -15,11 +15,7 @@ pub struct MapGenerator {
 
 impl MapGenerator {
     pub fn new(rng: SmallRng, map_type: &MapType) -> Self {
-        let rest_index = (1..=match map_type {
-            MapType::Beginner => 12,
-            MapType::Master => 18,
-        })
-            .collect();
+        let rest_index = (1..=map_type.sector_count()).collect();
         Self {
             rng,
             map_type: map_type.clone(),
@@ -41,8 +37,8 @@ impl MapGenerator {
     /// 8. Nebula will ALWAYS be adjacent to at least one Empty sector.
     pub fn generate_sectors(&mut self) -> anyhow::Result<Vec<Sector>> {
         let sector_types = match self.map_type {
-            MapType::Beginner => BEGINNER_TYPES,
-            MapType::Master => MASTER_TYPES,
+            MapType::Standard => BEGINNER_TYPES,
+            MapType::Expert => MASTER_TYPES,
         };
 
         while self.temp.len() < sector_types.len() {
@@ -72,11 +68,7 @@ impl MapGenerator {
                 if *sector_type == SectorType::X {
                     println!("Failed to generate X, retry from the beginning.");
                     self.temp.clear();
-                    self.rest_index = (1..=match self.map_type {
-                        MapType::Beginner => 12,
-                        MapType::Master => 18,
-                    })
-                        .collect();
+                    self.rest_index = (1..=self.map_type.sector_count()).collect();
                 } else {
                     let prev = &sector_types[self.temp.len() - 1].0;
                     println!("Failed to generate {:?}, try again back", sector_type);
@@ -156,14 +148,14 @@ impl MapGenerator {
 
     fn generate_dwarf_planet_sector(&mut self) -> anyhow::Result<Vec<Sector>> {
         match self.map_type {
-            MapType::Beginner => {
+            MapType::Standard => {
                 let index = self.get_rest_index()?;
                 Ok(vec![Sector {
                     index,
                     r#type: SectorType::DwarfPlanet,
                 }])
             }
-            MapType::Master => {
+            MapType::Expert => {
                 // get a rand 6 sectors with at least 4 rooms for DwarfPlanet.
                 let range = self.get_rand_range(6, 4)?;
                 Ok(range
@@ -475,7 +467,7 @@ mod tests {
             // let seed = 99;
             println!("Seed: {}", seed);
             let rng = SmallRng::seed_from_u64(seed);
-            let mut g = MapGenerator::new(rng, &MapType::Master);
+            let mut g = MapGenerator::new(rng, &MapType::Expert);
             let r = g.generate_sectors().unwrap();
             // println!("{:?}", r);
             assert!(g.check_sectors_rules(&r));
