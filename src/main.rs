@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let layer = layer.compat();
     let router = Router::with_path("/socket.io").hoop(layer).goal(hello);
-    let acceptor = TcpListener::new("127.0.0.1:7878").bind().await;
+    let acceptor = TcpListener::new("0.0.0.0:17878").bind().await;
     Server::new(acceptor).serve(router).await;
 
     Ok(())
