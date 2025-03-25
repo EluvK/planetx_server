@@ -1,34 +1,45 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    map::{Clue, Map},
+    map::{Clue, Map, MapType},
     operation::{Operation, OperationResult},
+    server_state::User,
 };
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct GameStateResp {
+    pub id: String, // some rand id for each room. first 4 chars of uuid.
     pub status: GameState,
+    pub hint: Option<String>,
     pub users: Vec<UserState>,
     pub start_index: usize,
     pub end_index: usize,
+    pub map_seed: u64,
+    pub map_type: MapType,
 }
 
 impl GameStateResp {
-    // pub fn new() -> Self {
-    //     GameStateResp {
-    //         status,
-    //         users,
-    //         start_index,
-    //         end_index,
-    //     }
-    // }
+    pub fn new(id: String) -> Self {
+        GameStateResp {
+            id,
+            status: GameState::NotStarted,
+            hint: None,
+            users: vec![],
+            start_index: 1,
+            end_index: 9,
+            map_seed: rand::random(),
+            map_type: MapType::Standard,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GameState {
-    Start,
-    Wait(String),
+    NotStarted,
+    Starting,
+    Wait,
     AutoMove,
     End,
 }
@@ -38,10 +49,25 @@ pub enum GameState {
 pub struct UserState {
     pub id: String,
     pub name: String,
+    pub ready: bool,
     pub location: UserLocationSequence,
     pub should_move: bool,
     pub moves: Vec<Operation>,
     pub moves_result: Vec<OperationResult>,
+}
+
+impl UserState {
+    pub fn new(user: &User, child_index: usize) -> Self {
+        UserState {
+            id: user.id.clone(),
+            name: user.name.clone(),
+            ready: false,
+            location: UserLocationSequence::new(1, child_index),
+            should_move: false,
+            moves: vec![],
+            moves_result: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

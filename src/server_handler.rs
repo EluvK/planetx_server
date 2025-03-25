@@ -91,13 +91,13 @@ async fn handle_room(io: SocketIo, socket: SocketRef, state: StateRef, op: RoomU
 
     match state.lock().await.handle_room_op(socket.clone(), user, op) {
         Ok(resp) => {
-            for r in resp {
-                info!(ns = "socket.io", ?socket.id, ?r, "room op success");
+            for gs in resp {
+                info!(ns = "socket.io", ?socket.id, ?gs, "room op success");
                 // to every user in the room
                 io.of("/xplanet")
                     .unwrap()
-                    .to(r.room_id.clone())
-                    .emit("room_result", &r)
+                    .to(gs.id.clone())
+                    .emit("game_state", &gs)
                     .await
                     .ok();
             }

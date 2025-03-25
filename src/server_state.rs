@@ -7,17 +7,16 @@ use tokio::sync::Mutex;
 use tracing::info;
 
 use crate::{
-    map::{MapType, SectorType, validate_index_in_range},
+    map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
-    room::{GameStateResp, Room, RoomResult, RoomUserOperation, ServerGameState},
+    room::{GameStateResp, RoomUserOperation, ServerGameState, UserState},
 };
 
 type RoomId = String;
 
 pub struct State {
     pub users: HashMap<String, User>,               // socket_id -> User
-    pub rooms: HashMap<RoomId, Room>,               // room_id -> Room
-    pub game_state: HashMap<RoomId, GameStateResp>, // room_id -> game_state
+    pub game_state: HashMap<RoomId, GameStateResp>, // room_id -> room/game_state data
     pub map_data: HashMap<RoomId, ServerGameState>, // map_seed -> map_data
 }
 
@@ -30,7 +29,6 @@ impl State {
     fn new() -> Self {
         State {
             users: HashMap::new(),
-            rooms: HashMap::new(),
             game_state: HashMap::new(),
             map_data: HashMap::new(),
         }
@@ -44,28 +42,24 @@ impl State {
         self.users.get(socket_id)
     }
 
-    fn user_room(&self, user: &User) -> Option<(&RoomId, &Room)> {
-        self.rooms
-            .iter()
-            .find(|(_, room)| room.users.iter().any(|u| u.id == user.id))
-    }
-
     pub fn handle_action_op(
         &mut self,
         user: User,
         operation: &Operation,
     ) -> anyhow::Result<OperationResult> {
-        let (room_id, _room) = self
-            .user_room(&user)
-            .ok_or_else(|| anyhow::anyhow!("user not in room"))?;
-        let map = self
-            .map_data
-            .get(room_id)
-            .ok_or_else(|| anyhow::anyhow!("map not found"))?;
+        let room_id = self
+            .game_state
+            .iter()
+            .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
+            .ok_or_else(|| anyhow::anyhow!("user not in any room"))?;
         let game_state = self
             .game_state
             .get(room_id)
             .ok_or_else(|| anyhow::anyhow!("game state not found"))?;
+        let map = self
+            .map_data
+            .get(room_id)
+            .ok_or_else(|| anyhow::anyhow!("map not found"))?;
         let op_result = match operation {
             Operation::Survey(s) => {
                 if !validate_index_in_range(
@@ -108,15 +102,15 @@ impl State {
         Ok(op_result)
     }
 
-    fn _room_op(&mut self, user: User, op: InnerRoomOp) -> Vec<RoomResult> {
+    fn _room_op(&mut self, user: User, op: InnerRoomOp) -> Vec<GameStateResp> {
         let mut res = vec![];
         match op {
             InnerRoomOp::Enter(id) => {
-                if let Some(room) = self.rooms.get_mut(id) {
-                    if !room.users.iter().any(|u| u.id == user.id) && room.users.len() < 4 {
-                        let room_user = user.into();
-                        room.users.push(room_user);
-                        res.push(room.clone().into());
+                if let Some(gs) = self.game_state.get_mut(id) {
+                    if !gs.users.iter().any(|u| u.id == user.id) && gs.users.len() < 4 {
+                        let room_user = UserState::new(&user, gs.users.len() + 1);
+                        gs.users.push(room_user);
+                        res.push(gs.clone());
                     } else {
                         info!("room full or user already in room");
                     }
@@ -125,20 +119,20 @@ impl State {
                 }
             }
             InnerRoomOp::Leave(id) => {
-                if let Some(room) = self.rooms.get_mut(id) {
-                    if room.users.iter().any(|u| u.id == user.id) {
-                        room.users.retain(|u| u.id != user.id);
-                        res.push(room.clone().into());
+                if let Some(gs) = self.game_state.get_mut(id) {
+                    if gs.users.iter().any(|u| u.id == user.id) {
+                        gs.users.retain(|u| u.id != user.id);
+                        res.push(gs.clone());
                     }
                 } else {
                     info!("room not found");
                 }
             }
             InnerRoomOp::LeaveAll => {
-                for (_, room) in self.rooms.iter_mut() {
-                    if room.users.iter().any(|u| u.id == user.id) {
-                        room.users.retain(|u| u.id != user.id);
-                        res.push(room.clone().into());
+                for (_, gs) in self.game_state.iter_mut() {
+                    if gs.users.iter().any(|u| u.id == user.id) {
+                        gs.users.retain(|u| u.id != user.id);
+                        res.push(gs.clone());
                     }
                 }
             }
@@ -151,7 +145,7 @@ impl State {
         socket: SocketRef,
         user: User,
         room_op: RoomUserOperation,
-    ) -> anyhow::Result<Vec<RoomResult>> {
+    ) -> anyhow::Result<Vec<GameStateResp>> {
         match room_op {
             RoomUserOperation::Create => {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
@@ -159,30 +153,26 @@ impl State {
                 let rand_new_id = loop {
                     let rand_id: String =
                         uuid::Uuid::new_v4().to_string().chars().take(4).collect();
-                    if !self.rooms.contains_key(&rand_id) {
+                    if !self.game_state.contains_key(&rand_id) {
                         break rand_id;
                     }
                 };
                 info!("new room id: {}", rand_new_id);
-                let room = Room {
-                    id: rand_new_id.clone(),
-                    users: vec![],
-                    map_seed: rand::random(), // todo
-                    map_type: MapType::Standard,
-                };
-                self.rooms.insert(rand_new_id.clone(), room.clone());
+
+                self.game_state
+                    .insert(rand_new_id.clone(), GameStateResp::new(rand_new_id.clone()));
                 results.extend(self._room_op(user, InnerRoomOp::Enter(&rand_new_id)));
                 socket.join(rand_new_id);
                 Ok(results)
             }
             RoomUserOperation::Edit(new_info) => {
-                let room = self
-                    .rooms
+                let gs = self
+                    .game_state
                     .get_mut(&new_info.room_id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
-                room.map_seed = new_info.map_seed;
-                room.map_type = new_info.map_type;
-                Ok(vec![room.clone().into()])
+                gs.map_seed = new_info.map_seed;
+                gs.map_type = new_info.map_type;
+                Ok(vec![gs.clone().into()])
             }
             RoomUserOperation::Join(id) => {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
@@ -196,30 +186,30 @@ impl State {
                 Ok(self._room_op(user, InnerRoomOp::Leave(&id)))
             }
             RoomUserOperation::Prepare(id) => {
-                let room = self
-                    .rooms
+                let gs = self
+                    .game_state
                     .get_mut(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
-                let user = room
+                let user = gs
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
                     .ok_or_else(|| anyhow::anyhow!("user not found"))?;
                 user.ready = true;
-                Ok(vec![room.clone().into()])
+                Ok(vec![gs.clone().into()])
             }
             RoomUserOperation::Unprepare(id) => {
-                let room = self
-                    .rooms
+                let gs = self
+                    .game_state
                     .get_mut(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
-                let user = room
+                let user = gs
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
                     .ok_or_else(|| anyhow::anyhow!("user not found"))?;
                 user.ready = false;
-                Ok(vec![room.clone().into()])
+                Ok(vec![gs.clone().into()])
             }
         }
     }
