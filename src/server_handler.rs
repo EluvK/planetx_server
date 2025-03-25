@@ -65,13 +65,13 @@ async fn handle_op(_io: SocketIo, socket: SocketRef, state: StateRef, op: Operat
 
     info!(?op, ?socket.id, "received op {:?}", op);
 
-    match state.lock().await.handle_action_op(user, op) {
+    match state.lock().await.handle_action_op(user, &op) {
         Ok(resp) => {
             // to the user
             info!(ns = "socket.io", ?socket.id, ?resp, "op success");
             socket.emit("op_result", &resp).ok();
             // to other users in the room
-            // todo
+            socket.to("room_id").emit("op", &op).await.ok();
         }
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "op error");
@@ -89,7 +89,7 @@ async fn handle_room(io: SocketIo, socket: SocketRef, state: StateRef, op: RoomU
 
     info!(?op, ?socket.id, "received room op {:?}", op);
 
-    match state.lock().await.handle_room_op(user, op) {
+    match state.lock().await.handle_room_op(socket.clone(), user, op) {
         Ok(resp) => {
             for r in resp {
                 info!(ns = "socket.io", ?socket.id, ?r, "room op success");

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use socketioxide::extract::SocketRef;
 use tokio::sync::Mutex;
+use tracing::info;
 
 use crate::{
     map::{MapType, SectorType, validate_index_in_range},
@@ -19,9 +21,9 @@ pub struct State {
     pub map_data: HashMap<RoomId, ServerGameState>, // map_seed -> map_data
 }
 
-enum InnerRoomOp {
-    Enter(String),
-    Leave(String),
+enum InnerRoomOp<'a> {
+    Enter(&'a String),
+    Leave(&'a String),
     LeaveAll,
 }
 impl State {
@@ -51,7 +53,7 @@ impl State {
     pub fn handle_action_op(
         &mut self,
         user: User,
-        operation: Operation,
+        operation: &Operation,
     ) -> anyhow::Result<OperationResult> {
         let (room_id, _room) = self
             .user_room(&user)
@@ -100,7 +102,7 @@ impl State {
             }
             Operation::DoPublish(dp) => {
                 // update game state
-                OperationResult::DoPublish((dp.index, dp.sector_type))
+                OperationResult::DoPublish((dp.index, dp.sector_type.clone()))
             }
         };
         Ok(op_result)
@@ -110,20 +112,26 @@ impl State {
         let mut res = vec![];
         match op {
             InnerRoomOp::Enter(id) => {
-                if let Some(room) = self.rooms.get_mut(&id) {
+                if let Some(room) = self.rooms.get_mut(id) {
                     if !room.users.iter().any(|u| u.id == user.id) && room.users.len() < 4 {
                         let room_user = user.into();
                         room.users.push(room_user);
                         res.push(room.clone().into());
+                    } else {
+                        info!("room full or user already in room");
                     }
+                } else {
+                    info!("room not found");
                 }
             }
             InnerRoomOp::Leave(id) => {
-                if let Some(room) = self.rooms.get_mut(&id) {
+                if let Some(room) = self.rooms.get_mut(id) {
                     if room.users.iter().any(|u| u.id == user.id) {
                         room.users.retain(|u| u.id != user.id);
                         res.push(room.clone().into());
                     }
+                } else {
+                    info!("room not found");
                 }
             }
             InnerRoomOp::LeaveAll => {
@@ -140,11 +148,14 @@ impl State {
 
     pub fn handle_room_op(
         &mut self,
+        socket: SocketRef,
         user: User,
         room_op: RoomUserOperation,
     ) -> anyhow::Result<Vec<RoomResult>> {
         match room_op {
             RoomUserOperation::Create => {
+                let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
+                socket.leave_all();
                 let rand_new_id = loop {
                     let rand_id: String =
                         uuid::Uuid::new_v4().to_string().chars().take(4).collect();
@@ -152,15 +163,16 @@ impl State {
                         break rand_id;
                     }
                 };
+                info!("new room id: {}", rand_new_id);
                 let room = Room {
                     id: rand_new_id.clone(),
-                    users: vec![user.clone().into()],
+                    users: vec![],
                     map_seed: rand::random(), // todo
                     map_type: MapType::Standard,
                 };
                 self.rooms.insert(rand_new_id.clone(), room.clone());
-                let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
-                results.extend(self._room_op(user, InnerRoomOp::Enter(rand_new_id)));
+                results.extend(self._room_op(user, InnerRoomOp::Enter(&rand_new_id)));
+                socket.join(rand_new_id);
                 Ok(results)
             }
             RoomUserOperation::Edit(new_info) => {
@@ -174,10 +186,15 @@ impl State {
             }
             RoomUserOperation::Join(id) => {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
-                results.extend(self._room_op(user, InnerRoomOp::Enter(id)));
+                socket.leave_all();
+                results.extend(self._room_op(user, InnerRoomOp::Enter(&id)));
+                socket.join(id);
                 Ok(results)
             }
-            RoomUserOperation::Leave(id) => Ok(self._room_op(user, InnerRoomOp::Leave(id))),
+            RoomUserOperation::Leave(id) => {
+                socket.leave(id.clone());
+                Ok(self._room_op(user, InnerRoomOp::Leave(&id)))
+            }
             RoomUserOperation::Prepare(id) => {
                 let room = self
                     .rooms
