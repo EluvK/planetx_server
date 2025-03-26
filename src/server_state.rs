@@ -60,6 +60,7 @@ impl State {
             .map_data
             .get(room_id)
             .ok_or_else(|| anyhow::anyhow!("map not found"))?;
+        // todo add user checker, check if it's user turn to op
         let op_result = match operation {
             Operation::Survey(s) => {
                 if !validate_index_in_range(
@@ -77,12 +78,20 @@ impl State {
                 OperationResult::Survey(map.map.survey_sector(s.start, s.end, &s.sector_type))
             }
             Operation::Target(t) => {
-                if !validate_index_in_range(1, map.map.size(), t.index, None, map.map.size()) {
+                if !validate_index_in_range(
+                    game_state.start_index,
+                    game_state.end_index,
+                    t.index,
+                    None,
+                    map.map.size(),
+                ) {
                     return Err(anyhow::anyhow!("invalid index"));
                 }
+                // todo add scan twice only limit
                 OperationResult::Target(map.map.target_sector(t.index))
             }
             Operation::Research(r) => {
+                // todo add can not reasearch continously limit
                 OperationResult::Research(map.research_clues[r.index - 1].clone())
             }
             Operation::Locate(l) => OperationResult::Locate(map.map.locate_x(

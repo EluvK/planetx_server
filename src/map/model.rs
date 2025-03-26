@@ -237,6 +237,7 @@ mod tests {
     #[test]
     fn test_validate_index() {
         assert!(validate_index_in_range(1, 9, 3, None, 18));
+        assert!(validate_index_in_range(1, 9, 9, None, 18));
         assert!(validate_index_in_range(1, 9, 3, Some(4), 18));
         assert!(!validate_index_in_range(1, 9, 3, Some(2), 18));
         assert!(!validate_index_in_range(1, 9, 10, None, 18));

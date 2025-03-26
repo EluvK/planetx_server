@@ -32,14 +32,27 @@ impl GameStateResp {
             map_type: MapType::Standard,
         }
     }
+
+    pub fn empty() -> Self {
+        GameStateResp {
+            id: "".to_string(),
+            status: GameState::NotStarted,
+            hint: None,
+            users: vec![],
+            start_index: 1,
+            end_index: 9,
+            map_seed: 0,
+            map_type: MapType::Standard,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GameState {
     NotStarted,
     Starting,
-    Wait,
+    Wait(String),
     AutoMove,
     End,
 }
@@ -102,4 +115,37 @@ pub struct ServerGameState {
     pub map: Map,
     pub research_clues: Vec<Clue>,
     pub x_clues: Vec<Clue>,
+}
+
+impl ServerGameState {
+    pub fn clue_secret(&self) -> Vec<String> {
+        self.research_clues
+            .iter()
+            .map(|c| c.as_secret())
+            .chain(self.x_clues.iter().map(|c| c.as_secret()))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use super::*;
+
+    #[test]
+    fn test_game_state_serde() {
+        let mut gs = GameStateResp::empty();
+        let json = serde_json::to_string(&gs).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"","status":"not_started","hint":null,"users":[],"start_index":1,"end_index":9,"map_seed":0,"map_type":"standard"}"#
+        );
+
+        gs.status = GameState::Wait("1234".to_string());
+        let json = serde_json::to_string(&gs).unwrap();
+        assert_eq!(
+            json,
+            r#"{"id":"","status":{"wait":"1234"},"hint":null,"users":[],"start_index":1,"end_index":9,"map_seed":0,"map_type":"standard"}"#
+        );
+    }
 }
