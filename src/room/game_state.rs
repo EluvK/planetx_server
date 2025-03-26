@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    map::{Clue, Map, MapType},
+    map::{Clue, ClueSecret, Map, MapType},
     operation::{Operation, OperationResult},
     server_state::User,
 };
@@ -27,7 +27,7 @@ impl GameStateResp {
             hint: None,
             users: vec![],
             start_index: 1,
-            end_index: 9,
+            end_index: 6,
             map_seed: rand::random(),
             map_type: MapType::Standard,
         }
@@ -40,7 +40,7 @@ impl GameStateResp {
             hint: None,
             users: vec![],
             start_index: 1,
-            end_index: 9,
+            end_index: 6,
             map_seed: 0,
             map_type: MapType::Standard,
         }
@@ -118,11 +118,17 @@ pub struct ServerGameState {
 }
 
 impl ServerGameState {
-    pub fn clue_secret(&self) -> Vec<String> {
+    pub fn clue_secret(&self) -> Vec<ClueSecret> {
         self.research_clues
             .iter()
-            .map(|c| c.as_secret())
-            .chain(self.x_clues.iter().map(|c| c.as_secret()))
+            .map(|c| ClueSecret {
+                index: c.index.clone(),
+                secret: c.as_secret(),
+            })
+            .chain(self.x_clues.iter().map(|c| ClueSecret {
+                index: c.index.clone(),
+                secret: c.as_secret(),
+            }))
             .collect()
     }
 }

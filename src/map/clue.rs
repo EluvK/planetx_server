@@ -1,12 +1,13 @@
 use core::panic;
 
 use rand::{Rng, SeedableRng, rngs::SmallRng};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::model::{SectorType, Sectors};
 
 #[derive(Debug, Clone)]
 pub struct Clue {
+    pub index: ClueEnum,
     pub subject: SectorType,
     pub object: SectorType,
     pub conn: ClueConnection,
@@ -59,6 +60,31 @@ impl Clue {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum ClueEnum {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    X1,
+    X2,
+}
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ClueSecret {
+    pub index: ClueEnum,
+    pub secret: String,
+}
+#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ClueDetail {
+    pub index: ClueEnum,
+    pub detail: String,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ClueConnection {
     AllAdjacent, // all
@@ -103,7 +129,17 @@ impl ClueGenerator {
 
     pub fn generate_clues(&mut self) -> anyhow::Result<(Vec<Clue>, Vec<Clue>)> {
         let mut res = vec![];
+
         while res.len() < 6 {
+            let index = match res.len() {
+                0 => ClueEnum::A,
+                1 => ClueEnum::B,
+                2 => ClueEnum::C,
+                3 => ClueEnum::D,
+                4 => ClueEnum::E,
+                5 => ClueEnum::F,
+                _ => panic!("clue index out of range"),
+            };
             let subject = self.get_rand_type(false, false);
             let object = self.get_rand_type(true, false);
 
@@ -112,6 +148,7 @@ impl ClueGenerator {
                 continue;
             }
             res.push(Clue {
+                index,
                 subject,
                 object,
                 conn,
@@ -122,6 +159,11 @@ impl ClueGenerator {
         while !check_x_space_only(&xres, &self.sectors) {
             xres.clear();
             while xres.len() < 2 {
+                let index = match xres.len() {
+                    0 => ClueEnum::X1,
+                    1 => ClueEnum::X2,
+                    _ => panic!("clue index out of range"),
+                };
                 let subject = SectorType::X;
                 let object = self.get_rand_type(true, false);
 
@@ -130,6 +172,7 @@ impl ClueGenerator {
                     continue;
                 }
                 xres.push(Clue {
+                    index,
                     subject,
                     object,
                     conn,

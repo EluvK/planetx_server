@@ -92,7 +92,13 @@ impl State {
             }
             Operation::Research(r) => {
                 // todo add can not reasearch continously limit
-                OperationResult::Research(map.research_clues[r.index - 1].clone())
+                OperationResult::Research(
+                    map.research_clues
+                        .iter()
+                        .find(|c| c.index == r.index)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("clue not found"))?,
+                )
             }
             Operation::Locate(l) => OperationResult::Locate(map.map.locate_x(
                 l.index,
@@ -181,6 +187,7 @@ impl State {
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
                 gs.map_seed = new_info.map_seed;
                 gs.map_type = new_info.map_type;
+                gs.end_index = gs.map_type.sector_count() / 2;
                 Ok(vec![gs.clone().into()])
             }
             RoomUserOperation::Join(id) => {

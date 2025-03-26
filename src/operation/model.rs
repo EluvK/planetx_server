@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::map::{Clue, SectorType};
+use crate::map::{Clue, ClueEnum, SectorType};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +27,7 @@ pub struct TargetOperation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResearchOperation {
-    pub index: usize,
+    pub index: ClueEnum,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,6 +63,8 @@ pub enum OperationResult {
 
 #[cfg(test)]
 mod tests {
+    use crate::map::ClueEnum;
+
     #[allow(unused_imports)]
     use super::*;
 
@@ -86,6 +88,7 @@ mod tests {
         assert_eq!(res_str, r#"{"do_publish":[1,"asteroid"]}"#);
 
         let research = OperationResult::Research(Clue {
+            index: ClueEnum::A,
             subject: SectorType::Asteroid,
             object: SectorType::DwarfPlanet,
             conn: crate::map::ClueConnection::NotAdjacent,
