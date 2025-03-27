@@ -223,7 +223,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     tracing::error!("game state not found, room_id: {}", room_id);
                     continue;
                 };
-                gs.status = GameState::Wait(gs.users[0].id.clone());
+                gs.status = GameState::Wait(vec![gs.users[0].id.clone()]);
                 gs.hint = Some("Game started".to_string());
                 io.of("/xplanet")
                     .unwrap()
@@ -232,6 +232,120 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     .await
                     .ok();
             }
+
+            // 3. autoMove as server
+            for (room_id, gs) in state.game_state.iter_mut() {
+                if gs.status == GameState::AutoMove {
+                    // find the first point from gs.start_index, move to it.
+
+                    let mut all_points = gs
+                        .users
+                        .iter()
+                        .map(|u| PointInfo {
+                            r#type: PointType::User(u.id.clone()),
+                            index: u.location.index,
+                            child_index: u.location.child_index,
+                        })
+                        .chain(gs.map_type.meeting_points().into_iter().map(
+                            |(index, child_index)| PointInfo {
+                                r#type: PointType::Meeting,
+                                index,
+                                child_index,
+                            },
+                        ))
+                        .chain(gs.map_type.xclue_points().into_iter().map(
+                            |(index, child_index)| PointInfo {
+                                r#type: PointType::XClue,
+                                index,
+                                child_index,
+                            },
+                        ))
+                        .collect::<Vec<_>>();
+                    // sort by start_index, index, child_index
+                    all_points.sort_by(|a, b| {
+                        a.index
+                            .cmp(&b.index)
+                            .then_with(|| a.child_index.cmp(&b.child_index))
+                    });
+                    info!(?all_points, "all points");
+
+                    let (Some(first_point), Some(second_point)) = (
+                        all_points
+                            .iter()
+                            .cycle()
+                            .skip_while(|p| p.index < gs.start_index)
+                            .nth(0)
+                            .cloned(),
+                        all_points
+                            .iter()
+                            .cycle()
+                            .skip_while(|p| p.index < gs.start_index)
+                            .nth(1)
+                            .cloned(),
+                    ) else {
+                        gs.status = GameState::End;
+                        gs.hint = Some("No more points".to_string());
+                        io.of("/xplanet")
+                            .unwrap()
+                            .to(room_id.clone())
+                            .emit("game_state", &gs)
+                            .await
+                            .ok();
+                        continue;
+                    };
+                    gs.start_index = first_point.index;
+                    gs.end_index = first_point.index + gs.map_type.sector_count() / 2 - 1;
+                    if gs.end_index > gs.map_type.sector_count() {
+                        gs.end_index -= gs.map_type.sector_count();
+                    }
+                    match first_point.r#type {
+                        PointType::User(id) => {
+                            gs.users
+                                .iter_mut()
+                                .find(|u| u.id == id)
+                                .unwrap()
+                                .should_move = true;
+                            gs.status = GameState::Wait(vec![id]);
+                            io.of("/xplanet")
+                                .unwrap()
+                                .to(room_id.clone())
+                                .emit("game_state", &gs)
+                                .await
+                                .ok();
+                        }
+                        PointType::Meeting => {
+                            info!("should start a meeting");
+                            gs.users.iter_mut().for_each(|u| u.should_move = true);
+                            gs.status =
+                                GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
+                            io.of("/xplanet")
+                                .unwrap()
+                                .to(room_id.clone())
+                                .emit("game_state", &gs)
+                                .await
+                                .ok();
+                        }
+                        PointType::XClue => {
+                            // todo broadcast xclue
+                            info!("should broadcast xclue");
+                        }
+                    }
+                }
+            }
         }
     });
+}
+
+#[derive(Debug, Clone)]
+struct PointInfo {
+    r#type: PointType,
+    index: usize,
+    child_index: usize,
+}
+
+#[derive(Debug, Clone)]
+enum PointType {
+    User(String),
+    Meeting,
+    XClue,
 }

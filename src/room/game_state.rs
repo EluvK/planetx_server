@@ -28,7 +28,7 @@ impl GameStateResp {
             users: vec![],
             start_index: 1,
             end_index: 6,
-            map_seed: rand::random(),
+            map_seed: rand::random::<u32>() as u64,
             map_type: MapType::Standard,
         }
     }
@@ -45,6 +45,37 @@ impl GameStateResp {
             map_type: MapType::Standard,
         }
     }
+
+    pub fn check_waiting_for(&mut self, user_id: &str) -> bool {
+        // if status is Wating, and user_id is in the waiting list, return true and delete it from the list.
+        if let GameState::Wait(ref mut waiting_list) = self.status {
+            if let Some(index) = waiting_list.iter().position(|id| id == user_id) {
+                waiting_list.remove(index);
+                if waiting_list.is_empty() {
+                    self.status = GameState::AutoMove;
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn user_move(&mut self, user_id: &str, delta: usize) -> anyhow::Result<()> {
+        let sector_count = self.map_type.sector_count();
+        let all = self
+            .users
+            .iter()
+            .map(|u| u.location.clone())
+            .collect::<Vec<_>>();
+        let user_state = self
+            .users
+            .iter_mut()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        user_state.location = user_state.location.next(delta, sector_count, &all);
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -52,7 +83,7 @@ impl GameStateResp {
 pub enum GameState {
     NotStarted,
     Starting,
-    Wait(String),
+    Wait(Vec<String>),
     AutoMove,
     End,
 }
@@ -87,7 +118,7 @@ impl UserState {
 #[serde(rename_all = "snake_case")]
 pub struct UserLocationSequence {
     pub index: usize,       // 1-12/1-18
-    pub child_index: usize, // 0-3
+    pub child_index: usize, // 1,2,3,4
 }
 
 impl UserLocationSequence {
@@ -106,7 +137,7 @@ impl UserLocationSequence {
         }
         let new_child_index = all.iter().filter(|s| s.index == new_index).count();
 
-        UserLocationSequence::new(new_index, new_child_index)
+        UserLocationSequence::new(new_index, new_child_index + 1)
     }
 }
 
@@ -144,14 +175,14 @@ mod tests {
         let json = serde_json::to_string(&gs).unwrap();
         assert_eq!(
             json,
-            r#"{"id":"","status":"not_started","hint":null,"users":[],"start_index":1,"end_index":9,"map_seed":0,"map_type":"standard"}"#
+            r#"{"id":"","status":"not_started","hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
         );
 
-        gs.status = GameState::Wait("1234".to_string());
+        gs.status = GameState::Wait(vec!["1234".to_string()]);
         let json = serde_json::to_string(&gs).unwrap();
         assert_eq!(
             json,
-            r#"{"id":"","status":{"wait":"1234"},"hint":null,"users":[],"start_index":1,"end_index":9,"map_seed":0,"map_type":"standard"}"#
+            r#"{"id":"","status":{"wait":["1234"]},"hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
         );
     }
 }

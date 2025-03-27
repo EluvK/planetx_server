@@ -108,6 +108,20 @@ impl MapType {
             MapType::Expert => 18,
         }
     }
+
+    pub fn meeting_points(&self) -> Vec<(usize, usize)> {
+        match self {
+            MapType::Standard => vec![3, 6, 9, 12].iter().map(|&x| (x, 5)).collect(),
+            MapType::Expert => vec![3, 6, 9, 12, 15, 18].iter().map(|&x| (x, 5)).collect(),
+        }
+    }
+
+    pub fn xclue_points(&self) -> Vec<(usize, usize)> {
+        match self {
+            MapType::Standard => vec![(10, 5)],
+            MapType::Expert => vec![(7, 5), (16, 5)],
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

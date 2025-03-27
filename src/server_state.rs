@@ -51,16 +51,19 @@ impl State {
             .game_state
             .iter()
             .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("user not in any room"))?;
         let game_state = self
             .game_state
-            .get(room_id)
+            .get_mut(&room_id)
             .ok_or_else(|| anyhow::anyhow!("game state not found"))?;
         let map = self
             .map_data
-            .get(room_id)
+            .get(&room_id)
             .ok_or_else(|| anyhow::anyhow!("map not found"))?;
-        // todo add user checker, check if it's user turn to op
+        if !game_state.check_waiting_for(&user.id) {
+            return Err(anyhow::anyhow!("not user turn"));
+        }
         let op_result = match operation {
             Operation::Survey(s) => {
                 if !validate_index_in_range(
@@ -75,6 +78,12 @@ impl State {
                 if s.sector_type == SectorType::X {
                     return Err(anyhow::anyhow!("invalid sector type"));
                 }
+                let range_size = if s.start <= s.end {
+                    s.end - s.start
+                } else {
+                    s.end + map.map.size() - s.start
+                };
+                game_state.user_move(&user.id, 4 - range_size / 3)?;
                 OperationResult::Survey(map.map.survey_sector(s.start, s.end, &s.sector_type))
             }
             Operation::Target(t) => {
@@ -87,11 +96,12 @@ impl State {
                 ) {
                     return Err(anyhow::anyhow!("invalid index"));
                 }
-                // todo add scan twice only limit
+                game_state.user_move(&user.id, 4)?;
                 OperationResult::Target(map.map.target_sector(t.index))
             }
             Operation::Research(r) => {
                 // todo add can not reasearch continously limit
+                game_state.user_move(&user.id, 1)?;
                 OperationResult::Research(
                     map.research_clues
                         .iter()
@@ -100,11 +110,15 @@ impl State {
                         .ok_or_else(|| anyhow::anyhow!("clue not found"))?,
                 )
             }
-            Operation::Locate(l) => OperationResult::Locate(map.map.locate_x(
-                l.index,
-                &l.pre_sector_type,
-                &l.next_sector_type,
-            )),
+            Operation::Locate(l) => {
+                game_state.user_move(&user.id, 5)?;
+                // todo add game last phase logic
+                OperationResult::Locate(map.map.locate_x(
+                    l.index,
+                    &l.pre_sector_type,
+                    &l.next_sector_type,
+                ))
+            }
             Operation::ReadyPublish(rp) => {
                 // update game state
                 OperationResult::ReadyPublish(rp.sectors.len())
