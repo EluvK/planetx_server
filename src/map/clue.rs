@@ -3,7 +3,10 @@ use core::panic;
 use rand::{Rng, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
-use super::model::{SectorType, Sectors};
+use super::{
+    MapType,
+    model::{SectorType, Sectors},
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,14 +112,16 @@ pub struct ClueGenerator {
     seed: u64,
     rng: SmallRng,
     sectors: Sectors,
+    map_type: MapType,
 }
 
 impl ClueGenerator {
-    pub fn new(seed: u64, sectors: Sectors) -> Self {
+    pub fn new(seed: u64, sectors: Sectors, map_type: MapType) -> Self {
         Self {
             seed,
             rng: SmallRng::seed_from_u64(seed),
             sectors,
+            map_type,
         }
     }
 
@@ -151,7 +156,7 @@ impl ClueGenerator {
         let mut cnt = 0;
         while !check_x_space_only(&xres, &self.sectors) {
             xres.clear();
-            while xres.len() < 2 {
+            while xres.len() < self.map_type.xclue_points().len() {
                 let index = match xres.len() {
                     0 => ClueEnum::X1,
                     1 => ClueEnum::X2,
@@ -436,7 +441,7 @@ mod tests {
             loop {
                 let map = Map::new(rng.clone(), MapType::Standard).unwrap();
                 // dbg!(&map.sectors.data);
-                let mut cg = ClueGenerator::new(seed, map.sectors.clone());
+                let mut cg = ClueGenerator::new(seed, map.sectors.clone(), map.r#type.clone());
                 for sector in &map.sectors.data {
                     println!("{}", sector);
                 }

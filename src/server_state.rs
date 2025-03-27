@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
-    room::{GameStage, GameStateResp, RoomUserOperation, ServerGameState, UserState},
+    room::{GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, UserState},
 };
 
 type RoomId = String;
@@ -232,6 +232,13 @@ impl State {
                 Ok(vec![gs.clone().into()])
             }
             RoomUserOperation::Join(id) => {
+                let gs = self
+                    .game_state
+                    .get_mut(&id)
+                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                if gs.status != GameState::NotStarted {
+                    return Err(anyhow::anyhow!("room already started"));
+                }
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
                 socket.leave_all();
                 results.extend(self._room_op(user, InnerRoomOp::Enter(&id)));

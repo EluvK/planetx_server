@@ -169,10 +169,12 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         broadcast_room_game_state(&io, gs).await;
                         continue;
                     };
-                    let Ok((research_clues, x_clues)) =
-                        crate::map::ClueGenerator::new(gs.map_seed, map.sectors.clone())
-                            .generate_clues()
-                    else {
+                    let Ok((research_clues, x_clues)) = crate::map::ClueGenerator::new(
+                        gs.map_seed,
+                        map.sectors.clone(),
+                        map.r#type.clone(),
+                    )
+                    .generate_clues() else {
                         gs.status = GameState::End;
                         gs.hint = Some("Clue generation failed".to_string());
                         broadcast_room_game_state(&io, gs).await;
@@ -269,6 +271,12 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     }
                     match first_point.r#type {
                         PointType::User(id) => {
+                            let name = gs
+                                .users
+                                .iter()
+                                .find(|u| u.id == id)
+                                .map(|u| u.name.clone())
+                                .unwrap_or_else(|| "Unknown".to_string());
                             gs.users
                                 .iter_mut()
                                 .find(|u| u.id == id)
@@ -276,6 +284,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 .should_move = true;
                             gs.status = GameState::Wait(vec![id]);
                             gs.game_stage = GameStage::UserMove;
+                            gs.hint = Some(format!("{} should move", name));
                             broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::Meeting => {
@@ -284,6 +293,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             gs.status =
                                 GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
                             gs.game_stage = GameStage::MeetingProposal;
+                            gs.hint = Some("Meeting proposal".to_string());
                             broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::XClue => {
@@ -297,6 +307,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     // todo auto meeting
                     info!("auto meeting");
                     gs.game_stage = GameStage::MeetingPublish;
+                    gs.hint = Some("Meeting proposal".to_string());
                     // make waiting next user move
                     broadcast_room_game_state(&io, gs).await;
                 }
