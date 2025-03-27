@@ -5,21 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use super::model::{SectorType, Sectors};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct Clue {
     pub index: ClueEnum,
     pub subject: SectorType,
     pub object: SectorType,
     pub conn: ClueConnection,
-}
-
-impl Serialize for Clue {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.collect_str(&self)
-    }
 }
 
 impl std::fmt::Display for Clue {
@@ -85,7 +77,8 @@ pub struct ClueDetail {
     pub detail: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum ClueConnection {
     AllAdjacent, // all
     OneAdjacent, // at least one

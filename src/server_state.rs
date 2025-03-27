@@ -9,7 +9,7 @@ use tracing::info;
 use crate::{
     map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
-    room::{GameStateResp, RoomUserOperation, ServerGameState, UserState},
+    room::{GameStage, GameStateResp, RoomUserOperation, ServerGameState, UserState},
 };
 
 type RoomId = String;
@@ -64,6 +64,25 @@ impl State {
         if !game_state.check_waiting_for(&user.id) {
             return Err(anyhow::anyhow!("not user turn"));
         }
+
+        match (operation, &game_state.game_stage) {
+            (
+                Operation::Survey(_)
+                | Operation::Target(_)
+                | Operation::Research(_)
+                | Operation::Locate(_),
+                GameStage::UserMove,
+            ) => {}
+            (Operation::ReadyPublish(_), GameStage::MeetingProposal) => {}
+            (Operation::DoPublish(_), GameStage::MeetingPublish) => {}
+            _rest => {
+                return Err(anyhow::anyhow!(
+                    "invalid operation at {:?} stage",
+                    &game_state.game_stage
+                ));
+            }
+        }
+
         let op_result = match operation {
             Operation::Survey(s) => {
                 if !validate_index_in_range(
@@ -128,6 +147,14 @@ impl State {
                 OperationResult::DoPublish((dp.index, dp.sector_type.clone()))
             }
         };
+
+        match operation {
+            Operation::ReadyPublish(_) | Operation::DoPublish(_) => {}
+            op => {
+                game_state.user_operation_record(&user.id, op, &op_result)?;
+            }
+        }
+
         Ok(op_result)
     }
 

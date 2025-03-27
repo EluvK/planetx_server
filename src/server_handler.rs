@@ -1,6 +1,9 @@
 use crate::{
     operation::Operation,
-    room::{GameState, GameStateResp, RoomUserOperation, ServerGameState, UserLocationSequence},
+    room::{
+        GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState,
+        UserLocationSequence, UserState,
+    },
     server_state::{StateRef, User},
 };
 use rand::{SeedableRng, rngs::SmallRng, seq::SliceRandom};
@@ -72,7 +75,8 @@ async fn handle_op(_io: SocketIo, socket: SocketRef, state: StateRef, op: Operat
             info!(ns = "socket.io", ?socket.id, ?resp, "op success");
             socket.emit("op_result", &resp).ok();
             // to other users in the room
-            socket.to("room_id").emit("op", &op).await.ok();
+            // the automove will do the broadcast
+            // socket.to("room_id").emit("op", &op).await.ok();
         }
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "op error");
@@ -99,21 +103,15 @@ async fn handle_room(_io: SocketIo, socket: SocketRef, state: StateRef, op: Room
             let mut do_resp = false;
             for gs in resp {
                 info!(ns = "socket.io", ?socket.id, ?gs, "room op success");
+
                 socket.to(gs.id.clone()).emit("game_state", &gs).await.ok();
                 if gs.users.iter().find(|&u| &u.id == &user.id).is_some() {
                     socket.emit("game_state", &gs).ok();
                     do_resp = true;
                 }
-
-                // // to every user in the room
-                // io.of("/xplanet")
-                //     .unwrap()
-                //     .to(gs.id.clone())
-                //     .emit("game_state", &gs)
-                //     .await
-                //     .ok();
             }
             if !do_resp {
+                // no game state to response, empty client game state
                 socket.emit("game_state", &GameStateResp::empty()).ok();
             }
         }
@@ -152,12 +150,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                 if gs.status == GameState::NotStarted && gs.users.iter().all(|u| u.ready) {
                     gs.status = GameState::Starting;
                     gs.hint = Some("Game is starting".to_string());
-                    io.of("/xplanet")
-                        .unwrap()
-                        .to(gs.id.clone())
-                        .emit("game_state", &gs)
-                        .await
-                        .ok();
+                    broadcast_room_game_state(&io, gs).await;
                     // todo start game generate map
                     gs.start_index = 1;
                     gs.end_index = gs.map_type.sector_count() / 2;
@@ -167,23 +160,13 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         user.location = UserLocationSequence::new(gs.start_index, index + 1);
                     }
 
-                    io.of("/xplanet")
-                        .unwrap()
-                        .to(gs.id.clone())
-                        .emit("game_state", &gs)
-                        .await
-                        .ok();
+                    broadcast_room_game_state(&io, gs).await;
 
                     let rng = SmallRng::seed_from_u64(gs.map_seed);
                     let Ok(map) = crate::map::Map::new(rng, gs.map_type.clone()) else {
                         gs.status = GameState::End;
                         gs.hint = Some("Map generation failed".to_string());
-                        io.of("/xplanet")
-                            .unwrap()
-                            .to(gs.id.clone())
-                            .emit("game_state", &gs)
-                            .await
-                            .ok();
+                        broadcast_room_game_state(&io, gs).await;
                         continue;
                     };
                     let Ok((research_clues, x_clues)) =
@@ -192,12 +175,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     else {
                         gs.status = GameState::End;
                         gs.hint = Some("Clue generation failed".to_string());
-                        io.of("/xplanet")
-                            .unwrap()
-                            .to(gs.id.clone())
-                            .emit("game_state", &gs)
-                            .await
-                            .ok();
+                        broadcast_room_game_state(&io, gs).await;
                         continue;
                     };
                     game_start_data.push((
@@ -225,27 +203,18 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                 };
                 gs.status = GameState::Wait(vec![gs.users[0].id.clone()]);
                 gs.hint = Some("Game started".to_string());
-                io.of("/xplanet")
-                    .unwrap()
-                    .to(room_id.clone())
-                    .emit("game_state", &gs)
-                    .await
-                    .ok();
+                broadcast_room_game_state(&io, gs).await;
             }
 
             // 3. autoMove as server
             for (room_id, gs) in state.game_state.iter_mut() {
-                if gs.status == GameState::AutoMove {
+                if gs.status == GameState::AutoMove && gs.game_stage == GameStage::UserMove {
                     // find the first point from gs.start_index, move to it.
 
-                    let mut all_points = gs
+                    let mut all_points: Vec<PointInfo> = gs
                         .users
                         .iter()
-                        .map(|u| PointInfo {
-                            r#type: PointType::User(u.id.clone()),
-                            index: u.location.index,
-                            child_index: u.location.child_index,
-                        })
+                        .map(Into::into)
                         .chain(gs.map_type.meeting_points().into_iter().map(
                             |(index, child_index)| PointInfo {
                                 r#type: PointType::Meeting,
@@ -269,7 +238,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     });
                     info!(?all_points, "all points");
 
-                    let (Some(first_point), Some(second_point)) = (
+                    let (Some(first_point), Some(_second_point)) = (
                         all_points
                             .iter()
                             .cycle()
@@ -306,24 +275,16 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 .unwrap()
                                 .should_move = true;
                             gs.status = GameState::Wait(vec![id]);
-                            io.of("/xplanet")
-                                .unwrap()
-                                .to(room_id.clone())
-                                .emit("game_state", &gs)
-                                .await
-                                .ok();
+                            gs.game_stage = GameStage::UserMove;
+                            broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::Meeting => {
                             info!("should start a meeting");
                             gs.users.iter_mut().for_each(|u| u.should_move = true);
                             gs.status =
                                 GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
-                            io.of("/xplanet")
-                                .unwrap()
-                                .to(room_id.clone())
-                                .emit("game_state", &gs)
-                                .await
-                                .ok();
+                            gs.game_stage = GameStage::MeetingProposal;
+                            broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::XClue => {
                             // todo broadcast xclue
@@ -331,9 +292,31 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         }
                     }
                 }
+
+                if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingProposal {
+                    // todo auto meeting
+                    info!("auto meeting");
+                    gs.game_stage = GameStage::MeetingPublish;
+                    // make waiting next user move
+                    broadcast_room_game_state(&io, gs).await;
+                }
             }
         }
     });
+}
+
+async fn broadcast_room_game_state(io: &SocketIo, gs: &mut GameStateResp) {
+    let mut gs = gs.clone();
+    gs.users.iter_mut().for_each(|u| {
+        u.moves_result.clear();
+    });
+
+    io.of("/xplanet")
+        .unwrap()
+        .to(gs.id.clone())
+        .emit("game_state", &gs)
+        .await
+        .ok();
 }
 
 #[derive(Debug, Clone)]
@@ -348,4 +331,14 @@ enum PointType {
     User(String),
     Meeting,
     XClue,
+}
+
+impl From<&UserState> for PointInfo {
+    fn from(user: &UserState) -> Self {
+        PointInfo {
+            r#type: PointType::User(user.id.clone()),
+            index: user.location.index,
+            child_index: user.location.child_index,
+        }
+    }
 }

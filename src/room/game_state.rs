@@ -11,6 +11,7 @@ use crate::{
 pub struct GameStateResp {
     pub id: String, // some rand id for each room. first 4 chars of uuid.
     pub status: GameState,
+    pub game_stage: GameStage,
     pub hint: Option<String>,
     pub users: Vec<UserState>,
     pub start_index: usize,
@@ -19,11 +20,21 @@ pub struct GameStateResp {
     pub map_type: MapType,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GameStage {
+    UserMove,
+    MeetingProposal,
+    MeetingPublish,
+    GameEnd,
+}
+
 impl GameStateResp {
     pub fn new(id: String) -> Self {
         GameStateResp {
             id,
             status: GameState::NotStarted,
+            game_stage: GameStage::UserMove,
             hint: None,
             users: vec![],
             start_index: 1,
@@ -37,6 +48,7 @@ impl GameStateResp {
         GameStateResp {
             id: "".to_string(),
             status: GameState::NotStarted,
+            game_stage: GameStage::UserMove,
             hint: None,
             users: vec![],
             start_index: 1,
@@ -74,6 +86,22 @@ impl GameStateResp {
             .ok_or_else(|| anyhow::anyhow!("user not found"))?;
         user_state.location = user_state.location.next(delta, sector_count, &all);
 
+        Ok(())
+    }
+
+    pub fn user_operation_record(
+        &mut self,
+        user_id: &str,
+        operation: &Operation,
+        operation_result: &OperationResult,
+    ) -> anyhow::Result<()> {
+        let user_state = self
+            .users
+            .iter_mut()
+            .find(|u| u.id == user_id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        user_state.moves.push(operation.clone());
+        user_state.moves_result.push(operation_result.clone());
         Ok(())
     }
 }
