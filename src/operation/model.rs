@@ -58,7 +58,7 @@ pub enum OperationResult {
     Research(Clue), // ABCDEFX1X2
     Locate(bool),
     ReadyPublish(usize),
-    DoPublish((usize, SectorType)), // index
+    DoPublish((usize, SectorType)), // index, ?todo remove sector_type, it's secret
 }
 
 #[cfg(test)]
@@ -95,7 +95,10 @@ mod tests {
         });
         let res_str = serde_json::to_string(&research).unwrap();
         println!("{}", res_str);
-        assert_eq!(res_str, r#"{"research":"没有 小行星 和 矮行星 相邻"}"#);
+        assert_eq!(
+            res_str,
+            r#"{"research":{"index":"A","subject":"asteroid","object":"dwarf_planet","conn":"notAdjacent"}}"#
+        );
 
         let locate = OperationResult::Locate(true);
         let res_str = serde_json::to_string(&locate).unwrap();
