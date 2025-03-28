@@ -61,7 +61,7 @@ impl Sectors {
             }
             pindex = prev.index;
         }
-        return false;
+        false
     }
     pub fn check_type_max_distance(&self, object: &SectorType) -> usize {
         self.data
@@ -72,7 +72,7 @@ impl Sectors {
                     .iter()
                     .filter(|b| b.r#type == *object) // 再次筛选类型匹配的元素
                     .map(move |b| {
-                        let distance = (a.index as isize - b.index as isize).abs() as usize;
+                        let distance = (a.index as isize - b.index as isize).unsigned_abs();
                         let wrapped_distance = self.data.len() - distance;
                         distance.min(wrapped_distance) + 1 // 计算最小距离
                     })
@@ -111,8 +111,8 @@ impl MapType {
 
     pub fn meeting_points(&self) -> Vec<(usize, usize)> {
         match self {
-            MapType::Standard => vec![3, 6, 9, 12].iter().map(|&x| (x, 5)).collect(),
-            MapType::Expert => vec![3, 6, 9, 12, 15, 18].iter().map(|&x| (x, 5)).collect(),
+            MapType::Standard => [3, 6, 9, 12].iter().map(|&x| (x, 5)).collect(),
+            MapType::Expert => [3, 6, 9, 12, 15, 18].iter().map(|&x| (x, 5)).collect(),
         }
     }
 
@@ -121,6 +121,26 @@ impl MapType {
             MapType::Standard => vec![(10, 5)],
             MapType::Expert => vec![(7, 5), (16, 5)],
         }
+    }
+
+    pub fn generate_tokens(&self, user_id: String, user_index: usize) -> Vec<Token> {
+        let mut tokens = vec![];
+        for _ in 1..=2 {
+            tokens.push(Token::new(SectorType::Comet, &user_id, user_index));
+        }
+        for _ in 1..=4 {
+            tokens.push(Token::new(SectorType::Asteroid, &user_id, user_index));
+        }
+        for _ in 1..=(match self {
+            MapType::Standard => 1,
+            MapType::Expert => 4,
+        }) {
+            tokens.push(Token::new(SectorType::DwarfPlanet, &user_id, user_index));
+        }
+        for _ in 1..=2 {
+            tokens.push(Token::new(SectorType::Nebula, &user_id, user_index));
+        }
+        tokens
     }
 }
 
@@ -149,7 +169,78 @@ impl std::fmt::Display for SectorType {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SecretToken {
+    pub user_id: String,
+    pub user_index: usize,          // game sequence 1, 2, 3, 4
+    pub sector_index: usize,        // 0 for init, 1-12/1-18 is set.
+    pub meeting_index: usize,       // 0 for known, 1,2, 3 is just published, // -1 for wrong guess
+    pub r#type: Option<SectorType>, // 0/-1 is Some, 123 is None
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Token {
+    pub placed: bool,
+    pub secret: SecretToken,
+    pub r#type: SectorType,
+}
+
+impl Token {
+    pub fn new(r#type: SectorType, user_id: &str, user_index: usize) -> Self {
+        Self {
+            placed: false,
+            secret: SecretToken {
+                user_id: user_id.to_owned(),
+                user_index,
+                sector_index: 0,  // not used yet
+                meeting_index: 0, // not used yet
+                r#type: None,     // not used yet
+            },
+            r#type,
+        }
+    }
+
+    pub fn is_not_used(&self, r#type: &SectorType) -> bool {
+        !self.placed && self.r#type == *r#type
+    }
+
+    pub fn is_ready_published(&self, r#type: &SectorType) -> bool {
+        self.placed && self.r#type == *r#type && self.secret.sector_index == 0
+    }
+
+    pub fn any_ready_published(&self) -> bool {
+        self.placed && self.secret.sector_index == 0
+    }
+
+    pub fn set_to_be_placed(&mut self) {
+        self.placed = true;
+    }
+
+    pub fn set_published(&mut self, sector_index: usize) {
+        assert!(self.placed && self.secret.sector_index == 0);
+        self.secret.sector_index = sector_index;
+        self.secret.meeting_index = 3;
+    }
+
+    pub fn push_at_meeting(&mut self) {
+        if self.placed && self.secret.sector_index != 0 && self.secret.meeting_index > 0 {
+            self.secret.meeting_index -= 1;
+            if self.secret.meeting_index == 0 {
+                self.secret.r#type = Some(self.r#type.clone());
+            }
+        }
+    }
+}
+
 impl Map {
+    pub fn place_holder() -> Self {
+        Self {
+            r#type: MapType::Standard,
+            sectors: Sectors { data: vec![] },
+        }
+    }
     pub fn new(rng: SmallRng, r#type: MapType) -> anyhow::Result<Self> {
         let sectors = MapGenerator::new(rng, &r#type).generate_sectors()?;
         Ok(Self {
@@ -227,9 +318,8 @@ pub fn validate_index_in_range(
     // the input_end can be None, which means the input is a single point.
     // or the input_end can be Some, which means the input is a range, so the input_st should be earlier than input_ed.
     in_range(start, end, input_st, max)
-        && input_ed.map_or(true, |ed| {
-            in_range(start, end, ed, max) && in_range(input_st, end, ed, max)
-        })
+        && input_ed
+            .is_none_or(|ed| in_range(start, end, ed, max) && in_range(input_st, end, ed, max))
 }
 
 pub fn in_range(start: usize, end: usize, input: usize, max: usize) -> bool {

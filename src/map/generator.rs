@@ -85,7 +85,7 @@ impl MapGenerator {
             }
         }
 
-        let mut results: Vec<Sector> = self.temp.drain().map(|(_, v)| v).flatten().collect();
+        let mut results: Vec<Sector> = self.temp.drain().flat_map(|(_, v)| v).collect();
         results.sort_by_key(|s| s.index);
         Ok(results)
     }
@@ -308,20 +308,21 @@ impl MapGenerator {
             }
             // println!("range_indexs: {:?}", range_indexs);
 
-            if range_indexs.len() < (empty_len - 2) as usize {
+            if range_indexs.len() < (empty_len - 2) {
                 continue;
             }
 
             let mut res = vec![st, ed];
-            while res.len() < empty_len as usize {
+            while res.len() < empty_len {
                 let index = range_indexs[self.rng.random_range(0..range_indexs.len())];
                 range_indexs.retain(|&x| x != index);
                 res.push(index);
             }
 
             // println!("res: {:?}", res);
-            for i in 0..res.len() {
-                self.rest_index.retain(|&x| x != res[i]);
+            for index in &res {
+                // for i in 0..res.len() {
+                self.rest_index.retain(|&x| x != *index);
             }
             // sort the result make sure the first and last is st and ed.
             res.sort_by_key(|&x| {
@@ -387,14 +388,14 @@ impl MapGenerator {
                         && right_sector.r#type != SectorType::Asteroid
                     {
                         println!("Asteroid adjacent error.");
-                        assert!(false);
+                        // assert!(false);
                         return false;
                     }
                 }
                 SectorType::DwarfPlanet => {
                     if left_sector.r#type == SectorType::X || right_sector.r#type == SectorType::X {
                         println!("DwarfPlanet adjacent to X error.");
-                        assert!(false);
+                        // assert!(false);
                         return false;
                     }
                 }
@@ -403,7 +404,7 @@ impl MapGenerator {
                         && right_sector.r#type != SectorType::Space
                     {
                         println!("Nebula adjacent to Space error.");
-                        assert!(false);
+                        // assert!(false);
                         return false;
                     }
                 }
@@ -412,7 +413,7 @@ impl MapGenerator {
                         || right_sector.r#type == SectorType::DwarfPlanet
                     {
                         println!("X adjacent to DwarfPlanet error.");
-                        assert!(false);
+                        // assert!(false);
                         return false;
                     }
                 }
@@ -428,10 +429,7 @@ const RAND_TRY_TIMES: u32 = 10;
 fn is_prime(n: usize) -> bool {
     // actually, we only need to check if n is a prime number less than 18.
     // so we can just hard code the prime numbers.
-    match n {
-        2 | 3 | 5 | 7 | 11 | 13 | 17 => true,
-        _ => false,
-    }
+    matches!(n, 2 | 3 | 5 | 7 | 11 | 13 | 17)
 }
 
 // 12 sectors. 2 + 4 + 1 + 2 + 1 + 2 = 12

@@ -1,7 +1,9 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    map::{Clue, ClueSecret, Map, MapType},
+    map::{Clue, ClueSecret, Map, MapType, SecretToken, SectorType, Token},
     operation::{Operation, OperationResult},
     server_state::User,
 };
@@ -126,6 +128,7 @@ pub struct UserState {
     pub should_move: bool,
     pub moves: Vec<Operation>,
     pub moves_result: Vec<OperationResult>,
+    pub used_token: Vec<SecretToken>,
 }
 
 impl UserState {
@@ -138,6 +141,7 @@ impl UserState {
             should_move: false,
             moves: vec![],
             moves_result: vec![],
+            used_token: vec![],
         }
     }
 }
@@ -174,9 +178,19 @@ pub struct ServerGameState {
     pub map: Map,
     pub research_clues: Vec<Clue>,
     pub x_clues: Vec<Clue>,
+    pub user_tokens: HashMap<String, Vec<Token>>,
 }
 
 impl ServerGameState {
+    pub fn placeholder() -> Self {
+        ServerGameState {
+            map: Map::place_holder(),
+            research_clues: vec![],
+            x_clues: vec![],
+            user_tokens: HashMap::new(),
+        }
+    }
+
     pub fn clue_secret(&self) -> Vec<ClueSecret> {
         self.research_clues
             .iter()
@@ -189,6 +203,47 @@ impl ServerGameState {
                 secret: c.as_secret(),
             }))
             .collect()
+    }
+
+    pub fn ready_publish_token(
+        &mut self,
+        user_id: &str,
+        input_tokens: &[SectorType],
+    ) -> anyhow::Result<()> {
+        let tokens = self
+            .user_tokens
+            .get_mut(user_id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        let mut edited_tokens = tokens.clone();
+        for it in input_tokens {
+            edited_tokens
+                .iter_mut()
+                .find(|t| t.is_not_used(it))
+                .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+                .set_to_be_placed();
+        }
+        *tokens = edited_tokens;
+        Ok(())
+    }
+
+    pub fn publish_token(
+        &mut self,
+        user_id: &str,
+        index: usize,
+        r#type: &SectorType,
+    ) -> anyhow::Result<()> {
+        let tokens = self
+            .user_tokens
+            .get_mut(user_id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        let mut edited_tokens = tokens.clone();
+        edited_tokens
+            .iter_mut()
+            .find(|t| t.is_ready_published(r#type))
+            .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+            .set_published(index);
+        *tokens = edited_tokens;
+        Ok(())
     }
 }
 
@@ -203,14 +258,14 @@ mod tests {
         let json = serde_json::to_string(&gs).unwrap();
         assert_eq!(
             json,
-            r#"{"id":"","status":"not_started","hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
+            r#"{"id":"","status":"not_started","game_stage":"user_move","hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
         );
 
         gs.status = GameState::Wait(vec!["1234".to_string()]);
         let json = serde_json::to_string(&gs).unwrap();
         assert_eq!(
             json,
-            r#"{"id":"","status":{"wait":["1234"]},"hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
+            r#"{"id":"","status":{"wait":["1234"]},"game_stage":"user_move","hint":null,"users":[],"start_index":1,"end_index":6,"map_seed":0,"map_type":"standard"}"#
         );
     }
 }

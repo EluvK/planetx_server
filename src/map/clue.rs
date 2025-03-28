@@ -37,7 +37,7 @@ impl std::fmt::Display for Clue {
             ClueConnection::NotAdjacent => write!(f, "没有 {} 和 {} 相邻", self.subject, self.object),
             ClueConnection::OneOpposite => write!(f, "至少一个 {} 和 {} 正对", self.subject, self.object),
             ClueConnection::NotOpposite => write!(f, "没有 {} 和 {} 正对", self.subject, self.object),
-            ClueConnection::AllInRange(n) => match &self.object == &self.subject {
+            ClueConnection::AllInRange(n) => match self.object == self.subject {
                 true => write!(f, "所有 {} 都在一个长度为 {} 的区间内", self.subject, n),
                 false => write!(f, "所有 {} 在 {} 的 {} 格范围内", self.subject, self.object, n),
             },
@@ -51,7 +51,7 @@ impl Clue {
         if self.object == self.subject || self.object == SectorType::Space {
             return format!("{}", self.subject);
         }
-        return format!("{} {}", self.subject, self.object);
+        format!("{} {}", self.subject, self.object)
     }
 }
 
@@ -268,9 +268,9 @@ impl ClueGenerator {
 
         match conn {
             ClueConnection::AllAdjacent => match (subject, object) {
-                (SectorType::Comet, SectorType::Comet) => return false, // op clue show commets are 2 && 3
+                (SectorType::Comet, SectorType::Comet) => false, // op clue show commets are 2 && 3
                 (SectorType::Asteroid, SectorType::Asteroid)
-                | (SectorType::Nebula, SectorType::Space) => return false, // not very useful
+                | (SectorType::Nebula, SectorType::Space) => false, // not very useful
                 // (SectorType::DwarfPlanet, SectorType::DwarfPlanet) => return false, //? it's a little op, keep it for now
                 (s, o) => {
                     for sindex in self
@@ -285,12 +285,12 @@ impl ClueGenerator {
                             return false;
                         }
                     }
-                    return true;
+                    true
                 }
             },
             ClueConnection::OneAdjacent => match (subject, object) {
-                (s, o) if s == o => return false, // op or useless clue
-                (SectorType::Nebula, SectorType::Space) => return false, // not very useful
+                (s, o) if s == o => false,                        // op or useless clue
+                (SectorType::Nebula, SectorType::Space) => false, // not very useful
                 (s, o) => self
                     .sectors
                     .data
@@ -302,9 +302,9 @@ impl ClueGenerator {
                     }),
             },
             ClueConnection::NotAdjacent => match (subject, object) {
-                (s, o) if s == o => return false, // op or useless clue
-                (SectorType::Nebula, SectorType::Space) => return false, // definitely false
-                (SectorType::X, SectorType::DwarfPlanet) => return false, // useless
+                (s, o) if s == o => false,                         // op or useless clue
+                (SectorType::Nebula, SectorType::Space) => false,  // definitely false
+                (SectorType::X, SectorType::DwarfPlanet) => false, // useless
                 (s, o) => self
                     .sectors
                     .data
@@ -339,7 +339,7 @@ impl ClueGenerator {
                     *s != SectorType::DwarfPlanet // not very useful for dwarf
                         && self.sectors.check_type_max_distance(s) <= *range
                 }
-                (SectorType::Nebula, SectorType::Space) => return false, //not useful
+                (SectorType::Nebula, SectorType::Space) => false, //not useful
                 (s, o) => self
                     .sectors
                     .data
@@ -349,7 +349,7 @@ impl ClueGenerator {
             },
 
             ClueConnection::NotInRange(range) => match (subject, object) {
-                (s, o) if s == o => return false, // useless
+                (s, o) if s == o => false, // useless
                 (s, o) => self
                     .sectors
                     .data
@@ -361,7 +361,7 @@ impl ClueGenerator {
     }
 }
 fn check_x_space_only(xclues: &[Clue], sectors: &Sectors) -> bool {
-    if xclues.len() == 0 {
+    if xclues.is_empty() {
         return false;
     }
     // println!("clues: {:?}", xclues);
@@ -419,7 +419,7 @@ fn check_x_space_only(xclues: &[Clue], sectors: &Sectors) -> bool {
         .collect();
 
     // println!("possible_x: {:?}", possible_x);
-    return possible_x.len() == 0;
+    possible_x.is_empty()
 }
 
 #[cfg(test)]
