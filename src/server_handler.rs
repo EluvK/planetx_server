@@ -163,6 +163,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         user_tokens.insert(user.id.clone(), tokens);
                     }
 
+                    gs.hint = Some("Game is starting".to_string());
                     broadcast_room_game_state(&io, gs).await;
 
                     let rng = SmallRng::seed_from_u64(gs.map_seed);
@@ -200,7 +201,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
 
                     *ss = server_game_state;
 
-                    gs.status = GameState::Wait(vec![gs.users[0].id.clone()]);
+                    gs.status = GameState::AutoMove;
                     gs.hint = Some("Game started".to_string());
                     broadcast_room_game_state(&io, gs).await;
                 }
@@ -255,7 +256,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             gs.status =
                                 GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
                             gs.game_stage = GameStage::MeetingProposal;
-                            gs.hint = Some("Meeting proposal".to_string());
+                            gs.hint = Some("Meeting proposal, Everyone should move".to_string());
                         }
                         PointType::XClue => {
                             // todo broadcast xclue
@@ -284,6 +285,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     broadcast_room_game_state(&io, gs).await;
                 }
 
+                // each users should publish tokens
                 // check publish first then proposal, we could update tokens after proposal
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingPublish {
                     let mut user_points =
@@ -309,6 +311,13 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             .is_some_and(|tokens| tokens.iter().any(|t| t.any_ready_published()))
                         {
                             gs.status = GameState::Wait(vec![id.clone()]);
+                            let name = gs
+                                .users
+                                .iter()
+                                .find(|u| u.id == id)
+                                .map(|u| u.name.clone())
+                                .unwrap_or_else(|| "Unknown".to_string());
+                            gs.hint = Some(format!("{} should publish", name));
                             need_publish = true;
                             break;
                         }
@@ -342,8 +351,10 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
 
                     // make waiting next user move
                     broadcast_room_game_state(&io, gs).await;
+                    broadcast_room_board_token(&io, &gs.id, ss).await;
                 }
 
+                // proposal finished, and waiting for each user publish
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingProposal {
                     // todo auto meeting
                     info!("server MeetingPublish");
