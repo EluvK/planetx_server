@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     operation::Operation,
     room::{
@@ -31,7 +33,7 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
                 .0
                 .lock()
                 .await
-                .upsert_user(user.0.clone(), socket.id.to_string());
+                .upsert_user(socket.id.to_string(), user.0.clone(), socket.clone());
             info!(ns = "socket.io", ?socket.id, "auth {:?}", user.0);
             socket.emit("server_resp", "auth success").ok();
         },
@@ -105,7 +107,7 @@ async fn handle_room(_io: SocketIo, socket: SocketRef, state: StateRef, op: Room
                 info!(ns = "socket.io", ?socket.id, ?gs, "room op success");
 
                 socket.to(gs.id.clone()).emit("game_state", &gs).await.ok();
-                if gs.users.iter().find(|&u| &u.id == &user.id).is_some() {
+                if gs.users.iter().any(|u| u.id == user.id) {
                     socket.emit("game_state", &gs).ok();
                     do_resp = true;
                 }
@@ -126,7 +128,7 @@ async fn handle_room(_io: SocketIo, socket: SocketRef, state: StateRef, op: Room
 }
 
 pub fn register_state_manager(state: StateRef, io: SocketIo) {
-    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
     tokio::task::spawn(async move {
         loop {
             interval.tick().await;
@@ -134,30 +136,31 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
 
             // 1. clean empty game rooms
             let mut clean_room_ids = Vec::new();
-            for (room_id, gs) in state.game_state.iter() {
+            for (room_id, gs) in state.iter_game_state() {
                 if gs.users.is_empty() {
                     clean_room_ids.push(room_id.clone());
                 }
             }
             for room_id in clean_room_ids {
-                state.game_state.remove(&room_id);
-                state.map_data.remove(&room_id);
+                state.state_data.remove(&room_id);
             }
 
-            // 2.1 check if all users in a room are ready, and start the game
-            let mut game_start_data = Vec::new();
-            for (room_id, gs) in state.game_state.iter_mut() {
+            // 2 check if all users in a room are ready, and start the game
+            let mut updated_tokens = Vec::new();
+            for (room_id, (gs, ss)) in state.iter_mut_all() {
                 if gs.status == GameState::NotStarted && gs.users.iter().all(|u| u.ready) {
                     gs.status = GameState::Starting;
                     gs.hint = Some("Game is starting".to_string());
                     broadcast_room_game_state(&io, gs).await;
-                    // todo start game generate map
                     gs.start_index = 1;
                     gs.end_index = gs.map_type.sector_count() / 2;
                     gs.users.shuffle(&mut SmallRng::seed_from_u64(gs.map_seed));
+                    let mut user_tokens = HashMap::new();
                     for (index, user) in gs.users.iter_mut().enumerate() {
                         user.should_move = index == 0;
                         user.location = UserLocationSequence::new(gs.start_index, index + 1);
+                        let tokens = gs.map_type.generate_tokens(user.id.clone(), index + 1);
+                        user_tokens.insert(user.id.clone(), tokens);
                     }
 
                     broadcast_room_game_state(&io, gs).await;
@@ -180,80 +183,40 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         broadcast_room_game_state(&io, gs).await;
                         continue;
                     };
-                    game_start_data.push((
-                        room_id.clone(),
-                        ServerGameState {
-                            map,
-                            research_clues,
-                            x_clues,
-                        },
-                    ));
+                    let server_game_state = ServerGameState {
+                        map,
+                        research_clues,
+                        x_clues,
+                        user_tokens,
+                    };
+                    io.of("/xplanet")
+                        .unwrap()
+                        .to(room_id.clone())
+                        .emit("game_start", &server_game_state.clue_secret())
+                        .await
+                        .ok();
+                    // distrubute tokens emiting to users
+                    updated_tokens.push(server_game_state.user_tokens.clone());
+
+                    *ss = server_game_state;
+
+                    gs.status = GameState::Wait(vec![gs.users[0].id.clone()]);
+                    gs.hint = Some("Game started".to_string());
+                    broadcast_room_game_state(&io, gs).await;
                 }
             }
-            // 2.2 send game start data, update map data
-            for (room_id, server_game_state) in game_start_data {
-                io.of("/xplanet")
-                    .unwrap()
-                    .to(room_id.clone())
-                    .emit("game_start", &server_game_state.clue_secret())
-                    .await
-                    .ok();
-                state.map_data.insert(room_id.clone(), server_game_state);
-                let Some(gs) = state.game_state.get_mut(&room_id) else {
-                    tracing::error!("game state not found, room_id: {}", room_id);
-                    continue;
-                };
-                gs.status = GameState::Wait(vec![gs.users[0].id.clone()]);
-                gs.hint = Some("Game started".to_string());
-                broadcast_room_game_state(&io, gs).await;
+            // send each token to user
+            for tokens in &updated_tokens {
+                send_each_token(&state, tokens);
             }
 
             // 3. autoMove as server
-            for (room_id, gs) in state.game_state.iter_mut() {
+            updated_tokens.clear();
+            for (room_id, (gs, ss)) in state.iter_mut_all() {
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::UserMove {
                     // find the first point from gs.start_index, move to it.
 
-                    let mut all_points: Vec<PointInfo> = gs
-                        .users
-                        .iter()
-                        .map(Into::into)
-                        .chain(gs.map_type.meeting_points().into_iter().map(
-                            |(index, child_index)| PointInfo {
-                                r#type: PointType::Meeting,
-                                index,
-                                child_index,
-                            },
-                        ))
-                        .chain(gs.map_type.xclue_points().into_iter().map(
-                            |(index, child_index)| PointInfo {
-                                r#type: PointType::XClue,
-                                index,
-                                child_index,
-                            },
-                        ))
-                        .collect::<Vec<_>>();
-                    // sort by start_index, index, child_index
-                    all_points.sort_by(|a, b| {
-                        a.index
-                            .cmp(&b.index)
-                            .then_with(|| a.child_index.cmp(&b.child_index))
-                    });
-                    info!(?all_points, "all points");
-
-                    let (Some(first_point), Some(_second_point)) = (
-                        all_points
-                            .iter()
-                            .cycle()
-                            .skip_while(|p| p.index < gs.start_index)
-                            .nth(0)
-                            .cloned(),
-                        all_points
-                            .iter()
-                            .cycle()
-                            .skip_while(|p| p.index < gs.start_index)
-                            .nth(1)
-                            .cloned(),
-                    ) else {
+                    let Some(next_point) = find_next_point(gs, false) else {
                         gs.status = GameState::End;
                         gs.hint = Some("No more points".to_string());
                         io.of("/xplanet")
@@ -264,12 +227,12 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             .ok();
                         continue;
                     };
-                    gs.start_index = first_point.index;
-                    gs.end_index = first_point.index + gs.map_type.sector_count() / 2 - 1;
+                    gs.start_index = next_point.index;
+                    gs.end_index = next_point.index + gs.map_type.sector_count() / 2 - 1;
                     if gs.end_index > gs.map_type.sector_count() {
                         gs.end_index -= gs.map_type.sector_count();
                     }
-                    match first_point.r#type {
+                    match next_point.r#type {
                         PointType::User(id) => {
                             let name = gs
                                 .users
@@ -285,7 +248,6 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             gs.status = GameState::Wait(vec![id]);
                             gs.game_stage = GameStage::UserMove;
                             gs.hint = Some(format!("{} should move", name));
-                            broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::Meeting => {
                             info!("should start a meeting");
@@ -294,26 +256,152 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
                             gs.game_stage = GameStage::MeetingProposal;
                             gs.hint = Some("Meeting proposal".to_string());
-                            broadcast_room_game_state(&io, gs).await;
                         }
                         PointType::XClue => {
                             // todo broadcast xclue
                             info!("should broadcast xclue");
+                            let Some(second_point) = find_next_point(gs, true) else {
+                                gs.status = GameState::End;
+                                gs.hint = Some("No more points".to_string());
+                                io.of("/xplanet")
+                                    .unwrap()
+                                    .to(room_id.clone())
+                                    .emit("game_state", &gs)
+                                    .await
+                                    .ok();
+                                continue;
+                            };
+                            gs.hint = Some("X clue time".to_string());
+                            gs.start_index = second_point.index;
+                            gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
+                            if gs.end_index > gs.map_type.sector_count() {
+                                gs.end_index -= gs.map_type.sector_count();
+                            }
+                            gs.game_stage = GameStage::UserMove;
+                            gs.status = GameState::AutoMove;
                         }
                     }
+                    broadcast_room_game_state(&io, gs).await;
+                }
+
+                // check publish first then proposal, we could update tokens after proposal
+                if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingPublish {
+                    let mut user_points =
+                        gs.users.iter().map(Into::into).collect::<Vec<PointInfo>>();
+                    user_points.sort_by(|a, b| {
+                        a.index
+                            .cmp(&b.index)
+                            .then_with(|| a.child_index.cmp(&b.child_index))
+                    });
+                    info!(?user_points, "user points");
+
+                    let mut need_publish = false;
+                    for id in user_points.iter().filter_map(|p| {
+                        if let PointType::User(id) = &p.r#type {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        if ss
+                            .user_tokens
+                            .get(&id)
+                            .is_some_and(|tokens| tokens.iter().any(|t| t.any_ready_published()))
+                        {
+                            gs.status = GameState::Wait(vec![id.clone()]);
+                            need_publish = true;
+                            break;
+                        }
+                    }
+
+                    if !need_publish {
+                        ss.user_tokens.iter_mut().for_each(|(_user_id, tokens)| {
+                            tokens.iter_mut().for_each(|t| t.push_at_meeting());
+                        });
+                        // ?todo broadcast meeting publish
+                        // need to find next user to move
+                        let Some(second_point) = find_next_point(gs, true) else {
+                            gs.status = GameState::End;
+                            gs.hint = Some("No more points".to_string());
+                            io.of("/xplanet")
+                                .unwrap()
+                                .to(room_id.clone())
+                                .emit("game_state", &gs)
+                                .await
+                                .ok();
+                            continue;
+                        };
+                        gs.start_index = second_point.index;
+                        gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
+                        if gs.end_index > gs.map_type.sector_count() {
+                            gs.end_index -= gs.map_type.sector_count();
+                        }
+                        gs.game_stage = GameStage::UserMove;
+                        gs.status = GameState::AutoMove;
+                    }
+
+                    // make waiting next user move
+                    broadcast_room_game_state(&io, gs).await;
                 }
 
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingProposal {
                     // todo auto meeting
-                    info!("auto meeting");
+                    info!("server MeetingPublish");
                     gs.game_stage = GameStage::MeetingPublish;
-                    gs.hint = Some("Meeting proposal".to_string());
-                    // make waiting next user move
+                    gs.hint = Some("Gathering tokens, prepare for Meeting publish".to_string());
                     broadcast_room_game_state(&io, gs).await;
+                    broadcast_room_board_token(&io, &gs.id, ss).await;
+                    updated_tokens.push(ss.user_tokens.clone());
                 }
+            }
+            for tokens in &updated_tokens {
+                send_each_token(&state, tokens);
             }
         }
     });
+}
+
+fn find_next_point(gs: &mut GameStateResp, next_next: bool) -> Option<PointInfo> {
+    let index = if next_next { 1 } else { 0 };
+    let mut all_points: Vec<PointInfo> = gs
+        .users
+        .iter()
+        .map(Into::into)
+        .chain(
+            gs.map_type
+                .meeting_points()
+                .into_iter()
+                .map(|(index, child_index)| PointInfo {
+                    r#type: PointType::Meeting,
+                    index,
+                    child_index,
+                }),
+        )
+        .chain(
+            gs.map_type
+                .xclue_points()
+                .into_iter()
+                .map(|(index, child_index)| PointInfo {
+                    r#type: PointType::XClue,
+                    index,
+                    child_index,
+                }),
+        )
+        .collect::<Vec<_>>();
+    // sort by start_index, index, child_index
+    all_points.sort_by(|a, b| {
+        a.index
+            .cmp(&b.index)
+            .then_with(|| a.child_index.cmp(&b.child_index))
+    });
+    info!(?all_points, "all points");
+
+    all_points
+        .iter()
+        .cycle()
+        .skip_while(|p| p.index < gs.start_index)
+        .nth(index)
+        .cloned()
 }
 
 async fn broadcast_room_game_state(io: &SocketIo, gs: &mut GameStateResp) {
@@ -328,6 +416,40 @@ async fn broadcast_room_game_state(io: &SocketIo, gs: &mut GameStateResp) {
         .emit("game_state", &gs)
         .await
         .ok();
+}
+
+async fn broadcast_room_board_token(io: &SocketIo, room_id: &str, ss: &ServerGameState) {
+    let tokens = ss
+        .user_tokens
+        .iter()
+        .flat_map(|(_user_id, tokens)| tokens.iter())
+        .filter(|t| t.placed)
+        .map(|t| &t.secret)
+        .cloned()
+        .collect::<Vec<_>>();
+    io.of("/xplanet")
+        .unwrap()
+        .to(room_id.to_owned())
+        .emit("board_tokens", &tokens)
+        .await
+        .ok();
+}
+
+fn send_each_token(
+    state: &tokio::sync::MutexGuard<'_, crate::server_state::State>,
+    tokens: &HashMap<String, Vec<crate::map::Token>>,
+) {
+    for (user_id, token) in tokens {
+        let s = state
+            .users
+            .iter()
+            .find_map(|(_sid, (s, u))| (u.id == *user_id).then_some(s.clone()));
+        let Some(user_socket) = s else {
+            tracing::error!("user not found, user_id: {}", user_id);
+            continue;
+        };
+        user_socket.emit("token", token).ok();
+    }
 }
 
 #[derive(Debug, Clone)]

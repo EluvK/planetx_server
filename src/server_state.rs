@@ -15,9 +15,8 @@ use crate::{
 type RoomId = String;
 
 pub struct State {
-    pub users: HashMap<String, User>,               // socket_id -> User
-    pub game_state: HashMap<RoomId, GameStateResp>, // room_id -> room/game_state data
-    pub map_data: HashMap<RoomId, ServerGameState>, // map_seed -> map_data
+    pub users: HashMap<String, (SocketRef, User)>, // socket_id -> User
+    pub state_data: HashMap<RoomId, (GameStateResp, ServerGameState)>, // room_id -> game_data
 }
 
 enum InnerRoomOp<'a> {
@@ -29,17 +28,53 @@ impl State {
     fn new() -> Self {
         State {
             users: HashMap::new(),
-            game_state: HashMap::new(),
-            map_data: HashMap::new(),
+            state_data: HashMap::new(),
         }
     }
 
-    pub fn upsert_user(&mut self, user: User, socket_id: String) {
-        self.users.insert(socket_id, user);
+    pub fn iter_game_state(&self) -> impl Iterator<Item = (&String, &GameStateResp)> {
+        self.state_data.iter().map(|(k, v)| (k, &v.0))
+    }
+    // pub fn iter_server_state(&self) -> impl Iterator<Item = (&String, &ServerGameState)> {
+    //     self.state_data.iter().map(|(k, v)| (k, &v.1))
+    // }
+
+    pub fn iter_mut_game_state(&mut self) -> impl Iterator<Item = (&String, &mut GameStateResp)> {
+        self.state_data.iter_mut().map(|(k, v)| (k, &mut v.0))
+    }
+    // pub fn iter_mut_server_state(&mut self) -> impl Iterator<Item = (&String, &mut ServerGameState)> {
+    //     self.state_data.iter_mut().map(|(k, v)| (k, &mut v.1))
+    // }
+
+    pub fn iter_mut_all(
+        &mut self,
+    ) -> impl Iterator<Item = (&String, (&mut GameStateResp, &mut ServerGameState))> {
+        self.state_data
+            .iter_mut()
+            .map(|(k, v)| (k, (&mut v.0, &mut v.1)))
+    }
+
+    pub fn get_game_state(&mut self, room_id: &str) -> Option<&mut GameStateResp> {
+        self.state_data.get_mut(room_id).map(|(gs, _)| gs)
+    }
+
+    // pub fn get_server_state(&mut self, room_id: &str) -> Option<&mut ServerGameState> {
+    //     self.state_data.get_mut(room_id).map(|(_, map)| map)
+    // }
+
+    pub fn get_state(
+        &mut self,
+        room_id: &str,
+    ) -> Option<(&mut GameStateResp, &mut ServerGameState)> {
+        self.state_data.get_mut(room_id).map(|(gs, map)| (gs, map))
+    }
+
+    pub fn upsert_user(&mut self, socket_id: String, user: User, socket: SocketRef) {
+        self.users.insert(socket_id, (socket, user));
     }
 
     pub fn check_auth(&self, socket_id: &str) -> Option<&User> {
-        self.users.get(socket_id)
+        self.users.get(socket_id).map(|(_, user)| user)
     }
 
     pub fn handle_action_op(
@@ -48,19 +83,13 @@ impl State {
         operation: &Operation,
     ) -> anyhow::Result<OperationResult> {
         let room_id = self
-            .game_state
-            .iter()
+            .iter_game_state()
             .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("user not in any room"))?;
-        let game_state = self
-            .game_state
-            .get_mut(&room_id)
-            .ok_or_else(|| anyhow::anyhow!("game state not found"))?;
-        let map = self
-            .map_data
-            .get(&room_id)
-            .ok_or_else(|| anyhow::anyhow!("map not found"))?;
+        let (game_state, map) = self.get_state(&room_id).ok_or_else(|| {
+            anyhow::anyhow!("game state or map not found for room id: {}", room_id)
+        })?;
         if !game_state.check_waiting_for(&user.id) {
             return Err(anyhow::anyhow!("not user turn"));
         }
@@ -140,10 +169,13 @@ impl State {
             }
             Operation::ReadyPublish(rp) => {
                 // update game state
+                // todo check sector count and type.
+                map.ready_publish_token(&user.id, &rp.sectors)?;
                 OperationResult::ReadyPublish(rp.sectors.len())
             }
             Operation::DoPublish(dp) => {
                 // update game state
+                map.publish_token(&user.id, dp.index, &dp.sector_type)?;
                 OperationResult::DoPublish((dp.index, dp.sector_type.clone()))
             }
         };
@@ -162,7 +194,7 @@ impl State {
         let mut res = vec![];
         match op {
             InnerRoomOp::Enter(id) => {
-                if let Some(gs) = self.game_state.get_mut(id) {
+                if let Some(gs) = self.get_game_state(id) {
                     if !gs.users.iter().any(|u| u.id == user.id) && gs.users.len() < 4 {
                         let room_user = UserState::new(&user, gs.users.len() + 1);
                         gs.users.push(room_user);
@@ -175,7 +207,7 @@ impl State {
                 }
             }
             InnerRoomOp::Leave(id) => {
-                if let Some(gs) = self.game_state.get_mut(id) {
+                if let Some(gs) = self.get_game_state(id) {
                     if gs.users.iter().any(|u| u.id == user.id) {
                         gs.users.retain(|u| u.id != user.id);
                         res.push(gs.clone());
@@ -185,7 +217,7 @@ impl State {
                 }
             }
             InnerRoomOp::LeaveAll => {
-                for (_, gs) in self.game_state.iter_mut() {
+                for (_, gs) in self.iter_mut_game_state() {
                     if gs.users.iter().any(|u| u.id == user.id) {
                         gs.users.retain(|u| u.id != user.id);
                         res.push(gs.clone());
@@ -209,32 +241,35 @@ impl State {
                 let rand_new_id = loop {
                     let rand_id: String =
                         uuid::Uuid::new_v4().to_string().chars().take(4).collect();
-                    if !self.game_state.contains_key(&rand_id) {
+                    if !self.iter_game_state().any(|(id, _)| id == &rand_id) {
                         break rand_id;
                     }
                 };
                 info!("new room id: {}", rand_new_id);
 
-                self.game_state
-                    .insert(rand_new_id.clone(), GameStateResp::new(rand_new_id.clone()));
+                self.state_data.insert(
+                    rand_new_id.clone(),
+                    (
+                        GameStateResp::new(rand_new_id.clone()),
+                        ServerGameState::placeholder(),
+                    ),
+                );
                 results.extend(self._room_op(user, InnerRoomOp::Enter(&rand_new_id)));
                 socket.join(rand_new_id);
                 Ok(results)
             }
             RoomUserOperation::Edit(new_info) => {
                 let gs = self
-                    .game_state
-                    .get_mut(&new_info.room_id)
+                    .get_game_state(&new_info.room_id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
                 gs.map_seed = new_info.map_seed;
                 gs.map_type = new_info.map_type;
                 gs.end_index = gs.map_type.sector_count() / 2;
-                Ok(vec![gs.clone().into()])
+                Ok(vec![gs.clone()])
             }
             RoomUserOperation::Join(id) => {
                 let gs = self
-                    .game_state
-                    .get_mut(&id)
+                    .get_game_state(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
                 if gs.status != GameState::NotStarted {
                     return Err(anyhow::anyhow!("room already started"));
@@ -251,8 +286,7 @@ impl State {
             }
             RoomUserOperation::Prepare(id) => {
                 let gs = self
-                    .game_state
-                    .get_mut(&id)
+                    .get_game_state(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
                 let user = gs
                     .users
@@ -260,12 +294,11 @@ impl State {
                     .find(|u| u.id == user.id)
                     .ok_or_else(|| anyhow::anyhow!("user not found"))?;
                 user.ready = true;
-                Ok(vec![gs.clone().into()])
+                Ok(vec![gs.clone()])
             }
             RoomUserOperation::Unprepare(id) => {
                 let gs = self
-                    .game_state
-                    .get_mut(&id)
+                    .get_game_state(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
                 let user = gs
                     .users
@@ -273,7 +306,7 @@ impl State {
                     .find(|u| u.id == user.id)
                     .ok_or_else(|| anyhow::anyhow!("user not found"))?;
                 user.ready = false;
-                Ok(vec![gs.clone().into()])
+                Ok(vec![gs.clone()])
             }
         }
     }
