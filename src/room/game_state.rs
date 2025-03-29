@@ -28,6 +28,8 @@ pub enum GameStage {
     UserMove,
     MeetingProposal,
     MeetingPublish,
+    MeetingCheck,
+    LastMove,
     GameEnd,
 }
 
@@ -125,8 +127,10 @@ pub struct UserState {
     pub name: String,
     pub ready: bool,
     pub location: UserLocationSequence,
-    pub should_move: bool,
+    pub last_move: bool,
+    pub can_locate: bool,
     pub moves: Vec<Operation>,
+    #[serde(skip)]
     pub moves_result: Vec<OperationResult>,
     pub used_token: Vec<SecretToken>,
 }
@@ -138,7 +142,8 @@ impl UserState {
             name: user.name.clone(),
             ready: false,
             location: UserLocationSequence::new(1, child_index),
-            should_move: false,
+            last_move: true,
+            can_locate: true,
             moves: vec![],
             moves_result: vec![],
             used_token: vec![],
@@ -179,6 +184,8 @@ pub struct ServerGameState {
     pub research_clues: Vec<Clue>,
     pub x_clues: Vec<Clue>,
     pub user_tokens: HashMap<String, Vec<Token>>,
+    pub terminator_location: Option<UserLocationSequence>,
+    pub revealed_sector_indexs: Vec<usize>,
 }
 
 impl ServerGameState {
@@ -188,6 +195,8 @@ impl ServerGameState {
             research_clues: vec![],
             x_clues: vec![],
             user_tokens: HashMap::new(),
+            terminator_location: None,
+            revealed_sector_indexs: vec![],
         }
     }
 
@@ -243,6 +252,28 @@ impl ServerGameState {
             .ok_or_else(|| anyhow::anyhow!("token not enough"))?
             .set_published(index);
         *tokens = edited_tokens;
+        Ok(())
+    }
+
+    pub fn last_move_publish_token(
+        &mut self,
+        user_id: &str,
+        index: usize,
+        r#type: &SectorType,
+    ) -> anyhow::Result<()> {
+        // let tokens = self
+        //     .user_tokens
+        //     .get_mut(user_id)
+        //     .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+        // let mut edited_tokens = tokens.clone();
+        self.user_tokens
+            .get_mut(user_id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?
+            .iter_mut()
+            .find(|t| !t.placed && t.r#type == *r#type)
+            .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+            .set_published(index);
+        // *tokens = edited_tokens;
         Ok(())
     }
 }

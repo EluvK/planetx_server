@@ -35,6 +35,9 @@ impl State {
     pub fn iter_game_state(&self) -> impl Iterator<Item = (&String, &GameStateResp)> {
         self.state_data.iter().map(|(k, v)| (k, &v.0))
     }
+    pub fn iter_all(&self) -> impl Iterator<Item = (&String, (&GameStateResp, &ServerGameState))> {
+        self.state_data.iter().map(|(k, v)| (k, (&v.0, &v.1)))
+    }
     // pub fn iter_server_state(&self) -> impl Iterator<Item = (&String, &ServerGameState)> {
     //     self.state_data.iter().map(|(k, v)| (k, &v.1))
     // }
@@ -87,14 +90,14 @@ impl State {
             .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("user not in any room"))?;
-        let (game_state, map) = self.get_state(&room_id).ok_or_else(|| {
-            anyhow::anyhow!("game state or map not found for room id: {}", room_id)
+        let (gs, ss) = self.get_state(&room_id).ok_or_else(|| {
+            anyhow::anyhow!("game state or ss not found for room id: {}", room_id)
         })?;
-        if !game_state.check_waiting_for(&user.id) {
+        if !gs.check_waiting_for(&user.id) {
             return Err(anyhow::anyhow!("not user turn"));
         }
 
-        match (operation, &game_state.game_stage) {
+        match (operation, &gs.game_stage) {
             (
                 Operation::Survey(_)
                 | Operation::Target(_)
@@ -104,10 +107,11 @@ impl State {
             ) => {}
             (Operation::ReadyPublish(_), GameStage::MeetingProposal) => {}
             (Operation::DoPublish(_), GameStage::MeetingPublish) => {}
+            (Operation::DoPublish(_) | Operation::Locate(_), GameStage::LastMove) => {}
             _rest => {
                 return Err(anyhow::anyhow!(
                     "invalid operation at {:?} stage",
-                    &game_state.game_stage
+                    &gs.game_stage
                 ));
             }
         }
@@ -115,43 +119,60 @@ impl State {
         let op_result = match operation {
             Operation::Survey(s) => {
                 if !validate_index_in_range(
-                    game_state.start_index,
-                    game_state.end_index,
+                    gs.start_index,
+                    gs.end_index,
                     s.start,
                     Some(s.end),
-                    map.map.size(),
+                    ss.map.size(),
                 ) {
                     return Err(anyhow::anyhow!("invalid index"));
                 }
                 if s.sector_type == SectorType::X {
                     return Err(anyhow::anyhow!("invalid sector type"));
                 }
+                if s.sector_type == SectorType::Comet
+                    && (!matches!(s.start, 2 | 3 | 5 | 7 | 11 | 13 | 17)
+                        || !matches!(s.end, 2 | 3 | 5 | 7 | 11 | 13 | 17))
+                {
+                    return Err(anyhow::anyhow!("comet sector type start end must be prime"));
+                }
                 let range_size = if s.start <= s.end {
                     s.end - s.start
                 } else {
-                    s.end + map.map.size() - s.start
+                    s.end + ss.map.size() - s.start
                 };
-                game_state.user_move(&user.id, 4 - range_size / 3)?;
-                OperationResult::Survey(map.map.survey_sector(s.start, s.end, &s.sector_type))
+                gs.user_move(&user.id, 4 - range_size / 3)?;
+                OperationResult::Survey(ss.map.survey_sector(s.start, s.end, &s.sector_type))
             }
             Operation::Target(t) => {
                 if !validate_index_in_range(
-                    game_state.start_index,
-                    game_state.end_index,
+                    gs.start_index,
+                    gs.end_index,
                     t.index,
                     None,
-                    map.map.size(),
+                    ss.map.size(),
                 ) {
                     return Err(anyhow::anyhow!("invalid index"));
                 }
-                game_state.user_move(&user.id, 4)?;
-                OperationResult::Target(map.map.target_sector(t.index))
+                gs.user_move(&user.id, 4)?;
+                OperationResult::Target(ss.map.target_sector(t.index))
             }
             Operation::Research(r) => {
-                // todo add can not reasearch continously limit
-                game_state.user_move(&user.id, 1)?;
+                let user_state = gs
+                    .users
+                    .iter_mut()
+                    .find(|u| u.id == user.id)
+                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                if user_state
+                    .moves
+                    .last()
+                    .is_some_and(|op| matches!(op, Operation::Research(_)))
+                {
+                    return Err(anyhow::anyhow!("user can not research continuously"));
+                }
+                gs.user_move(&user.id, 1)?;
                 OperationResult::Research(
-                    map.research_clues
+                    ss.research_clues
                         .iter()
                         .find(|c| c.index == r.index)
                         .cloned()
@@ -159,31 +180,98 @@ impl State {
                 )
             }
             Operation::Locate(l) => {
-                game_state.user_move(&user.id, 5)?;
-                // todo add game last phase logic
-                OperationResult::Locate(map.map.locate_x(
-                    l.index,
-                    &l.pre_sector_type,
-                    &l.next_sector_type,
-                ))
+                if ss.terminator_location.is_some() {
+                    // or we can use game_stage == GameStage::LastMove
+                    let user_state = gs
+                        .users
+                        .iter_mut()
+                        .find(|u| u.id == user.id)
+                        .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    if !user_state.can_locate {
+                        return Err(anyhow::anyhow!("user can not locate anymore"));
+                    }
+                    user_state.can_locate = false;
+                    user_state.last_move = false;
+                    let r = OperationResult::Locate(ss.map.locate_x(
+                        l.index,
+                        &l.pre_sector_type,
+                        &l.next_sector_type,
+                    ));
+
+                    r
+                } else {
+                    gs.user_move(&user.id, 5)?;
+                    let r = OperationResult::Locate(ss.map.locate_x(
+                        l.index,
+                        &l.pre_sector_type,
+                        &l.next_sector_type,
+                    ));
+
+                    if matches!(r, OperationResult::Locate(true)) {
+                        gs.game_stage = GameStage::LastMove;
+                        let terminator = gs
+                            .users
+                            .iter_mut()
+                            .find(|u| u.id == user.id)
+                            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                        terminator.last_move = false;
+                        let terminator_location = terminator.location.clone();
+                        gs.users.iter_mut().for_each(|user| {
+                            if user.location.index >= terminator_location.index {
+                                user.last_move = false;
+                            }
+                        });
+                        ss.terminator_location = Some(terminator_location);
+                    }
+                    r
+                }
             }
             Operation::ReadyPublish(rp) => {
-                // update game state
-                // todo check sector count and type.
-                map.ready_publish_token(&user.id, &rp.sectors)?;
+                ss.ready_publish_token(&user.id, &rp.sectors)?;
                 OperationResult::ReadyPublish(rp.sectors.len())
             }
             Operation::DoPublish(dp) => {
-                // update game state
-                map.publish_token(&user.id, dp.index, &dp.sector_type)?;
+                if ss.revealed_sector_indexs.contains(&dp.index) {
+                    return Err(anyhow::anyhow!("sector {} already revealed", dp.index));
+                }
+
+                if ss.terminator_location.is_some() {
+                    let user_state = gs
+                        .users
+                        .iter_mut()
+                        .find(|u| u.id == user.id)
+                        .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    let ti = ss.terminator_location.clone().unwrap().index;
+                    let ui = user_state.location.index;
+                    let before_ge_4 = (ti > ui && (ui + 4) <= ti)
+                        || (ui + 4 <= (ti + gs.map_type.sector_count()));
+                    if user_state.can_locate && before_ge_4 {
+                        user_state.can_locate = false;
+                    } else {
+                        user_state.last_move = false;
+                    }
+                    ss.last_move_publish_token(&user.id, dp.index, &dp.sector_type)?;
+                } else {
+                }
+
+                ss.publish_token(&user.id, dp.index, &dp.sector_type)?;
                 OperationResult::DoPublish((dp.index, dp.sector_type.clone()))
             }
         };
 
+        let user_state = gs
+            .users
+            .iter_mut()
+            .find(|u| u.id == user.id)
+            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
         match operation {
-            Operation::ReadyPublish(_) | Operation::DoPublish(_) => {}
+            Operation::ReadyPublish(_) | Operation::DoPublish(_) => {
+                user_state.moves_result.push(op_result.clone());
+            }
             op => {
-                game_state.user_operation_record(&user.id, op, &op_result)?;
+                user_state.moves.push(op.clone());
+                user_state.moves_result.push(op_result.clone());
+                // gs.user_operation_record(&user.id, op, &op_result)?;
             }
         }
 
@@ -271,8 +359,12 @@ impl State {
                 let gs = self
                     .get_game_state(&id)
                     .ok_or_else(|| anyhow::anyhow!("room not found"))?;
-                if gs.status != GameState::NotStarted {
-                    return Err(anyhow::anyhow!("room already started"));
+                if gs.status != GameState::NotStarted && !gs.users.iter().any(|u| u.id == user.id) {
+                    return Err(anyhow::anyhow!("room already started, can not join"));
+                }
+                if gs.users.iter().any(|u| u.id == user.id) {
+                    socket.join(id);
+                    return Ok(vec![gs.clone()]);
                 }
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
                 socket.leave_all();

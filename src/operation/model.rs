@@ -58,7 +58,7 @@ pub enum OperationResult {
     Research(Clue), // ABCDEFX1X2
     Locate(bool),
     ReadyPublish(usize),
-    DoPublish((usize, SectorType)), // index, ?todo remove sector_type, it's secret
+    DoPublish((usize, SectorType)), // index
 }
 
 #[cfg(test)]

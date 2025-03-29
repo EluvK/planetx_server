@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use crate::{
     operation::Operation,
@@ -58,6 +58,49 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
          State::<StateRef>(state),
          Data::<RoomUserOperation>(op)| async move {
             handle_room(io, socket, state, op).await;
+        },
+    );
+
+    socket.on(
+        "sync",
+        |_io: SocketIo, socket: SocketRef, state: State<StateRef>| async move {
+            let user = state.lock().await.check_auth(socket.id.as_str()).cloned();
+            let Some(user) = user else {
+                info!(ns = "socket.io", ?socket.id, "unauthorized sync");
+                return;
+            };
+            for (_room_id, (gs, ss)) in state.lock().await.iter_all() {
+                for user_state in gs.users.iter() {
+                    if user_state.id != user.id {
+                        continue;
+                    }
+
+                    socket.emit("game_start", &ss.clue_secret()).ok();
+
+                    info!(ns = "socket.io", ?socket.id, "sync game state {:?}", gs);
+                    socket.emit("game_state", &gs).ok();
+
+                    for re in user_state.moves_result.iter() {
+                        socket.emit("op_result", re).ok();
+                    }
+
+                    let Some(tokens) = ss.user_tokens.get(&user.id) else {
+                        continue;
+                    };
+                    info!(ns = "socket.io", ?socket.id, "sync tokens {:?}", tokens);
+                    socket.emit("token", &tokens).ok();
+
+                    let tokens = ss
+                        .user_tokens
+                        .iter()
+                        .flat_map(|(_user_id, tokens)| tokens.iter())
+                        .filter(|t| t.placed)
+                        .map(|t| &t.secret)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    socket.emit("board_tokens", &tokens).ok();
+                }
+            }
         },
     );
 }
@@ -150,14 +193,13 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
             for (room_id, (gs, ss)) in state.iter_mut_all() {
                 if gs.status == GameState::NotStarted && gs.users.iter().all(|u| u.ready) {
                     gs.status = GameState::Starting;
-                    gs.hint = Some("Game is starting".to_string());
-                    broadcast_room_game_state(&io, gs).await;
+                    // gs.hint = Some("Game is starting".to_string());
+                    // broadcast_room_game_state(&io, gs).await;
                     gs.start_index = 1;
                     gs.end_index = gs.map_type.sector_count() / 2;
                     gs.users.shuffle(&mut SmallRng::seed_from_u64(gs.map_seed));
                     let mut user_tokens = HashMap::new();
                     for (index, user) in gs.users.iter_mut().enumerate() {
-                        user.should_move = index == 0;
                         user.location = UserLocationSequence::new(gs.start_index, index + 1);
                         let tokens = gs.map_type.generate_tokens(user.id.clone(), index + 1);
                         user_tokens.insert(user.id.clone(), tokens);
@@ -173,6 +215,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         broadcast_room_game_state(&io, gs).await;
                         continue;
                     };
+                    info!(?map, "map generated");
                     let Ok((research_clues, x_clues)) = crate::map::ClueGenerator::new(
                         gs.map_seed,
                         map.sectors.clone(),
@@ -189,6 +232,8 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         research_clues,
                         x_clues,
                         user_tokens,
+                        terminator_location: None,
+                        revealed_sector_indexs: vec![],
                     };
                     io.of("/xplanet")
                         .unwrap()
@@ -241,26 +286,34 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 .find(|u| u.id == id)
                                 .map(|u| u.name.clone())
                                 .unwrap_or_else(|| "Unknown".to_string());
-                            gs.users
-                                .iter_mut()
-                                .find(|u| u.id == id)
-                                .unwrap()
-                                .should_move = true;
                             gs.status = GameState::Wait(vec![id]);
                             gs.game_stage = GameStage::UserMove;
                             gs.hint = Some(format!("{} should move", name));
                         }
                         PointType::Meeting => {
                             info!("should start a meeting");
-                            gs.users.iter_mut().for_each(|u| u.should_move = true);
                             gs.status =
                                 GameState::Wait(gs.users.iter().map(|u| u.id.clone()).collect());
                             gs.game_stage = GameStage::MeetingProposal;
                             gs.hint = Some("Meeting proposal, Everyone should move".to_string());
                         }
                         PointType::XClue => {
-                            // todo broadcast xclue
                             info!("should broadcast xclue");
+                            let index = gs
+                                .map_type
+                                .xclue_points()
+                                .iter()
+                                .position(|(i, c)| {
+                                    *i == next_point.index && *c == next_point.child_index
+                                })
+                                .unwrap_or(0);
+                            let xclue = ss.x_clues.get(index).map_or(vec![], |x| vec![x.clone()]);
+                            io.of("/xplanet")
+                                .unwrap()
+                                .to(room_id.clone())
+                                .emit("xclue", &xclue)
+                                .await
+                                .ok();
                             let Some(second_point) = find_next_point(gs, true) else {
                                 gs.status = GameState::End;
                                 gs.hint = Some("No more points".to_string());
@@ -283,6 +336,152 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         }
                     }
                     broadcast_room_game_state(&io, gs).await;
+                }
+
+                // meeting check phase
+                if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingCheck {
+                    let mut result = vec![];
+                    let mut checked_tokens = ss
+                        .user_tokens
+                        .iter_mut()
+                        .flat_map(|(user_id, tokens)| {
+                            tokens
+                                .iter_mut()
+                                .filter(|t| t.any_ready_checked())
+                                .map(|t| (user_id.clone(), t))
+                        })
+                        .collect::<Vec<(String, &mut crate::map::Token)>>();
+                    // we need to sort the tokens by sector_index, and then check them one by one
+                    checked_tokens.sort_by(|(_user_id_a, token_a), (_user_id_b, token_b)| {
+                        return token_a
+                            .secret
+                            .sector_index
+                            .cmp(&token_b.secret.sector_index);
+                    });
+
+                    for (user_id, token) in checked_tokens {
+                        let all_users_location = gs
+                            .users
+                            .iter()
+                            .map(|u| u.location.clone())
+                            .collect::<Vec<_>>();
+                        let user = gs
+                            .users
+                            .iter_mut()
+                            .find(|u| u.id == user_id)
+                            .unwrap_or_else(|| panic!("user not found: {user_id}"));
+                        if ss
+                            .map
+                            .meeting_check(token.secret.sector_index, &token.r#type)
+                        {
+                            // right, reveal the token
+                            token.secret.r#type = Some(token.r#type.clone());
+                            result.push(format!(
+                                "{}'s token at {}, {} is right",
+                                user.name, token.secret.sector_index, token.r#type
+                            ));
+                            ss.revealed_sector_indexs.push(token.secret.sector_index);
+                        } else {
+                            // punish the user move 1 step, token reveal and move outside the map
+                            token.secret.r#type = Some(token.r#type.clone());
+                            token.secret.meeting_index = 4;
+                            user.location = user.location.next(
+                                1,
+                                gs.map_type.sector_count(),
+                                &all_users_location,
+                            );
+                            result.push(format!(
+                                "{}'s token at {}, {} is wrong, user move 1 step",
+                                user.name, token.secret.sector_index, token.r#type
+                            ));
+                        }
+                    }
+                    // next checked tokens
+                    let mut double_check_tokens = ss
+                        .user_tokens
+                        .iter_mut()
+                        .flat_map(|(user_id, tokens)| {
+                            tokens
+                                .iter_mut()
+                                .filter(|t| {
+                                    t.secret.r#type.is_none()
+                                        && t.placed
+                                        && ss
+                                            .revealed_sector_indexs
+                                            .contains(&t.secret.sector_index)
+                                })
+                                .map(|t| (user_id.clone(), t))
+                        })
+                        .collect::<Vec<(String, &mut crate::map::Token)>>();
+                    double_check_tokens.sort_by(|(_user_id_a, token_a), (_user_id_b, token_b)| {
+                        return token_a
+                            .secret
+                            .sector_index
+                            .cmp(&token_b.secret.sector_index);
+                    });
+
+                    for (user_id, token) in double_check_tokens {
+                        let all_users_location = gs
+                            .users
+                            .iter()
+                            .map(|u| u.location.clone())
+                            .collect::<Vec<_>>();
+                        let user = gs
+                            .users
+                            .iter_mut()
+                            .find(|u| u.id == user_id)
+                            .unwrap_or_else(|| panic!("user not found: {user_id}"));
+                        if ss
+                            .map
+                            .meeting_check(token.secret.sector_index, &token.r#type)
+                        {
+                            // right, reveal the token
+                            token.secret.r#type = Some(token.r#type.clone());
+                            result.push(format!(
+                                "{}'s token at {}, {} is right",
+                                user.name, token.secret.sector_index, token.r#type
+                            ));
+                        } else {
+                            // punish the user move 1 step, token reveal and move outside the map
+                            token.secret.r#type = Some(token.r#type.clone());
+                            token.secret.meeting_index = 4;
+                            user.location = user.location.next(
+                                1,
+                                gs.map_type.sector_count(),
+                                &all_users_location,
+                            );
+                            result.push(format!(
+                                "{}'s token at {}, {} is wrong, user move 1 step",
+                                user.name, token.secret.sector_index, token.r#type
+                            ));
+                        }
+                    }
+
+                    info!("meeting check result: {:?}", result);
+                    // no one need to publish, go to next user
+                    // make waiting next user move
+                    gs.status = GameState::AutoMove;
+                    gs.game_stage = GameStage::UserMove;
+                    gs.hint = Some("Push forward".to_string());
+                    // need to find next user to move
+                    let Some(second_point) = find_next_point(gs, true) else {
+                        gs.status = GameState::End;
+                        gs.hint = Some("No more points".to_string());
+                        io.of("/xplanet")
+                            .unwrap()
+                            .to(room_id.clone())
+                            .emit("game_state", &gs)
+                            .await
+                            .ok();
+                        continue;
+                    };
+                    gs.start_index = second_point.index;
+                    gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
+                    if gs.end_index > gs.map_type.sector_count() {
+                        gs.end_index -= gs.map_type.sector_count();
+                    }
+                    broadcast_room_game_state(&io, gs).await;
+                    broadcast_room_board_token(&io, &gs.id, ss).await;
                 }
 
                 // each users should publish tokens
@@ -324,29 +523,58 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     }
 
                     if !need_publish {
+                        // push tokens forword at any none revealed sector
+                        // first we need to get revealed sector index
+                        let revealed_sectors = ss
+                            .user_tokens
+                            .iter()
+                            .flat_map(|(_user_id, tokens)| {
+                                tokens.iter().filter_map(|t| {
+                                    t.is_revealed_checked().then_some(t.secret.sector_index)
+                                })
+                            })
+                            .collect::<Vec<_>>();
+
                         ss.user_tokens.iter_mut().for_each(|(_user_id, tokens)| {
-                            tokens.iter_mut().for_each(|t| t.push_at_meeting());
+                            tokens
+                                .iter_mut()
+                                .for_each(|t| t.push_at_meeting(&revealed_sectors));
                         });
-                        // ?todo broadcast meeting publish
-                        // need to find next user to move
-                        let Some(second_point) = find_next_point(gs, true) else {
-                            gs.status = GameState::End;
-                            gs.hint = Some("No more points".to_string());
-                            io.of("/xplanet")
-                                .unwrap()
-                                .to(room_id.clone())
-                                .emit("game_state", &gs)
-                                .await
-                                .ok();
-                            continue;
-                        };
-                        gs.start_index = second_point.index;
-                        gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
-                        if gs.end_index > gs.map_type.sector_count() {
-                            gs.end_index -= gs.map_type.sector_count();
+
+                        // check if need to go to meeting check phase
+                        if ss
+                            .user_tokens
+                            .iter()
+                            .any(|(_user_id, tokens)| tokens.iter().any(|t| t.any_ready_checked()))
+                        {
+                            gs.status = GameState::AutoMove;
+                            gs.game_stage = GameStage::MeetingCheck;
+                            gs.hint = Some(
+                                "Push forward triggle Meeting check, Wait Checking...".to_string(),
+                            );
+                        } else {
+                            // no one need to publish, go to next user
+                            gs.status = GameState::AutoMove;
+                            gs.game_stage = GameStage::UserMove;
+                            gs.hint = Some("Push forward".to_string());
+                            // need to find next user to move
+                            let Some(second_point) = find_next_point(gs, true) else {
+                                gs.status = GameState::End;
+                                gs.hint = Some("No more points".to_string());
+                                io.of("/xplanet")
+                                    .unwrap()
+                                    .to(room_id.clone())
+                                    .emit("game_state", &gs)
+                                    .await
+                                    .ok();
+                                continue;
+                            };
+                            gs.start_index = second_point.index;
+                            gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
+                            if gs.end_index > gs.map_type.sector_count() {
+                                gs.end_index -= gs.map_type.sector_count();
+                            }
                         }
-                        gs.game_stage = GameStage::UserMove;
-                        gs.status = GameState::AutoMove;
                     }
 
                     // make waiting next user move
@@ -356,13 +584,71 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
 
                 // proposal finished, and waiting for each user publish
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingProposal {
-                    // todo auto meeting
                     info!("server MeetingPublish");
                     gs.game_stage = GameStage::MeetingPublish;
-                    gs.hint = Some("Gathering tokens, prepare for Meeting publish".to_string());
+                    gs.hint = Some("Gathering all tokens, ready for Meeting publish".to_string());
                     broadcast_room_game_state(&io, gs).await;
                     broadcast_room_board_token(&io, &gs.id, ss).await;
                     updated_tokens.push(ss.user_tokens.clone());
+                }
+
+                if gs.status == GameState::AutoMove && gs.game_stage == GameStage::LastMove {
+                    // int the last move, everyone before the winner will have one chance to move
+                    // and then the game will end
+                    let mut user_points =
+                        gs.users.iter().map(Into::into).collect::<Vec<PointInfo>>();
+                    user_points.sort_by(|a, b| {
+                        a.index
+                            .cmp(&b.index)
+                            .then_with(|| a.child_index.cmp(&b.child_index))
+                    });
+                    info!(?user_points, "user points");
+                    let mut need_wait_last_move = false;
+                    for id in user_points.iter().filter_map(|p| {
+                        if let PointType::User(id) = &p.r#type {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    }) {
+                        let Some(user) = gs.users.iter_mut().find(|u| u.id == id) else {
+                            continue;
+                        };
+                        if !user.last_move {
+                            continue;
+                        }
+                        gs.status = GameState::Wait(vec![id.clone()]);
+                        let name = gs
+                            .users
+                            .iter()
+                            .find(|u| u.id == id)
+                            .map(|u| u.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        gs.hint = Some(format!("{} should make last move", name));
+                        need_wait_last_move = true;
+                        break;
+                    }
+                    if !need_wait_last_move {
+                        // no one need to move, end the game
+                        gs.status = GameState::End;
+                        gs.game_stage = GameStage::GameEnd;
+                        gs.hint = Some("Game Over!".to_string());
+
+                        // reveal all tokens
+                        ss.user_tokens.iter_mut().for_each(|(_user_id, tokens)| {
+                            tokens.iter_mut().for_each(|t| {
+                                if t.reveal_in_the_end() {
+                                    if !ss.map.meeting_check(t.secret.sector_index, &t.r#type) {
+                                        // wrong, move to 4
+                                        t.secret.meeting_index = 4;
+                                    }
+                                }
+                            });
+                        });
+                    }
+
+                    broadcast_room_game_state(&io, gs).await;
+                    broadcast_room_board_token(&io, &gs.id, ss).await;
                 }
             }
             for tokens in &updated_tokens {
@@ -416,10 +702,10 @@ fn find_next_point(gs: &mut GameStateResp, next_next: bool) -> Option<PointInfo>
 }
 
 async fn broadcast_room_game_state(io: &SocketIo, gs: &mut GameStateResp) {
-    let mut gs = gs.clone();
-    gs.users.iter_mut().for_each(|u| {
-        u.moves_result.clear();
-    });
+    // let mut gs = gs.clone();
+    // gs.users.iter_mut().for_each(|u| {
+    //     u.moves_result.clear();
+    // });
 
     io.of("/xplanet")
         .unwrap()

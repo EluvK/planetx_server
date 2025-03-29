@@ -210,6 +210,10 @@ impl Token {
         self.placed && self.r#type == *r#type && self.secret.sector_index == 0
     }
 
+    pub fn is_revealed_checked(&self) -> bool {
+        self.placed && self.secret.r#type.is_some() && self.secret.meeting_index == 0
+    }
+
     pub fn any_ready_published(&self) -> bool {
         self.placed && self.secret.sector_index == 0
     }
@@ -218,19 +222,37 @@ impl Token {
         self.placed = true;
     }
 
+    pub fn any_ready_checked(&self) -> bool {
+        self.placed && self.secret.meeting_index == 0 && self.secret.r#type.is_none()
+    }
+
     pub fn set_published(&mut self, sector_index: usize) {
         assert!(self.placed && self.secret.sector_index == 0);
         self.secret.sector_index = sector_index;
         self.secret.meeting_index = 3;
     }
 
-    pub fn push_at_meeting(&mut self) {
-        if self.placed && self.secret.sector_index != 0 && self.secret.meeting_index > 0 {
+    pub fn push_at_meeting(&mut self, revealed_sectors: &[usize]) {
+        if self.placed
+            && self.secret.sector_index != 0
+            && self.secret.meeting_index > 0
+            && self.secret.meeting_index <= 3
+            && self.secret.r#type.is_none()
+            && !revealed_sectors.contains(&self.secret.sector_index)
+        {
             self.secret.meeting_index -= 1;
-            if self.secret.meeting_index == 0 {
-                self.secret.r#type = Some(self.r#type.clone());
-            }
+            // if self.secret.meeting_index == 0 {
+            //     self.secret.r#type = Some(self.r#type.clone());
+            // }
         }
+    }
+
+    pub fn reveal_in_the_end(&mut self) -> bool{
+        if self.placed && self.secret.r#type.is_none() {
+            self.secret.r#type = Some(self.r#type.clone());
+            return true;
+        }
+        false
     }
 }
 
@@ -288,6 +310,11 @@ impl Map {
         sector.r#type == SectorType::X
             && pre_sector.r#type == *pre_sector_type
             && next_sector.r#type == *next_sector_type
+    }
+
+    pub fn meeting_check(&self, index: usize, target_type: &SectorType) -> bool {
+        let sector = &self.sectors.data[index - 1];
+        sector.r#type == *target_type
     }
 }
 
