@@ -4,7 +4,15 @@ mod room;
 mod server_handler;
 mod server_state;
 
-use salvo::{Listener, Router, Server, conn::TcpListener, handler, prelude::TowerLayerCompat};
+use salvo::{
+    Listener, Router, Server,
+    conn::{
+        TcpListener,
+        rustls::{Keycert, RustlsConfig},
+    },
+    handler,
+    prelude::TowerLayerCompat,
+};
 use server_handler::{handle_on_connect, register_state_manager};
 use server_state::StateRef;
 use socketioxide::{SocketIo, extract::State};
@@ -35,9 +43,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     register_state_manager(state, io);
 
+    let cert = std::fs::read("./cert/certificate.crt").expect("cannot read cert file");
+    let key = std::fs::read("./cert/private.key").expect("cannot read key file");
+
+    let ssl_config = RustlsConfig::new(Keycert::new().cert(cert).key(key));
+
     let layer = layer.compat();
     let router = Router::with_path("/socket.io").hoop(layer).goal(hello);
-    let acceptor = TcpListener::new("0.0.0.0:17878").bind().await;
+    let acceptor = TcpListener::new("0.0.0.0:17878")
+        .rustls(ssl_config)
+        .bind()
+        .await;
     Server::new(acceptor).serve(router).await;
 
     Ok(())
