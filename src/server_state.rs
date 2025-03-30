@@ -145,6 +145,20 @@ impl State {
                 OperationResult::Survey(ss.map.survey_sector(s.start, s.end, &s.sector_type))
             }
             Operation::Target(t) => {
+                let user_state = gs
+                    .users
+                    .iter_mut()
+                    .find(|u| u.id == user.id)
+                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                if user_state
+                    .moves
+                    .iter()
+                    .filter(|op| matches!(op, Operation::Target(_)))
+                    .count()
+                    >= 2
+                {
+                    return Err(anyhow::anyhow!("user can not target more than 2 times"));
+                }
                 if !validate_index_in_range(
                     gs.start_index,
                     gs.end_index,
