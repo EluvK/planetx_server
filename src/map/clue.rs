@@ -199,17 +199,18 @@ impl ClueGenerator {
     }
 
     fn get_rand_conn(&mut self, is_x: bool) -> ClueConnection {
-        match self.rng.random_range(0..=6) {
-            0 => ClueConnection::AllAdjacent,
-            1 => ClueConnection::OneAdjacent,
-            2 => ClueConnection::NotAdjacent,
-            3 => ClueConnection::OneOpposite,
-            4 => ClueConnection::NotOpposite,
-            5 => {
-                ClueConnection::AllInRange(self.rng.random_range(if is_x { 2..=4 } else { 4..=6 }))
+        let easy = matches!(self.map_type, MapType::Standard) || is_x;
+        match self.rng.random_range(0..=11) {
+            0 | 1 => ClueConnection::AllAdjacent,
+            2 | 3 => ClueConnection::OneAdjacent,
+            4 | 5 => ClueConnection::NotAdjacent,
+            6 | 7 => ClueConnection::OneOpposite,
+            8 | 9 => ClueConnection::NotOpposite,
+            10 => {
+                ClueConnection::AllInRange(self.rng.random_range(if easy { 2..=4 } else { 4..=6 }))
             }
             _ => {
-                ClueConnection::NotInRange(self.rng.random_range(if is_x { 3..=4 } else { 2..=3 }))
+                ClueConnection::NotInRange(self.rng.random_range(if easy { 3..=4 } else { 2..=3 }))
             }
         }
     }
