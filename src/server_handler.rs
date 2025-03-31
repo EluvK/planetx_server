@@ -200,7 +200,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     gs.users.shuffle(&mut SmallRng::seed_from_u64(gs.map_seed));
                     let mut user_tokens = HashMap::new();
                     for (index, user) in gs.users.iter_mut().enumerate() {
-                        user.location = UserLocationSequence::new(gs.start_index, index + 1);
+                        user.location = UserLocationSequence::new(
+                            gs.start_index,
+                            index + 1,
+                            gs.map_type.sector_count(),
+                        );
                         let tokens = gs.map_type.generate_tokens(user.id.clone(), index + 1);
                         user_tokens.insert(user.id.clone(), tokens);
                     }
@@ -353,10 +357,10 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         .collect::<Vec<(String, &mut crate::map::Token)>>();
                     // we need to sort the tokens by sector_index, and then check them one by one
                     checked_tokens.sort_by(|(_user_id_a, token_a), (_user_id_b, token_b)| {
-                        return token_a
+                        token_a
                             .secret
                             .sector_index
-                            .cmp(&token_b.secret.sector_index);
+                            .cmp(&token_b.secret.sector_index)
                     });
 
                     for (user_id, token) in checked_tokens {
@@ -385,11 +389,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             // punish the user move 1 step, token reveal and move outside the map
                             token.secret.r#type = Some(token.r#type.clone());
                             token.secret.meeting_index = 4;
-                            user.location = user.location.next(
-                                1,
-                                gs.map_type.sector_count(),
-                                &all_users_location,
-                            );
+                            user.location = user.location.next(1, &all_users_location);
                             result.push(format!(
                                 "{}'s token at {}, {} is wrong, user move 1 step",
                                 user.name, token.secret.sector_index, token.r#type
@@ -414,10 +414,10 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         })
                         .collect::<Vec<(String, &mut crate::map::Token)>>();
                     double_check_tokens.sort_by(|(_user_id_a, token_a), (_user_id_b, token_b)| {
-                        return token_a
+                        token_a
                             .secret
                             .sector_index
-                            .cmp(&token_b.secret.sector_index);
+                            .cmp(&token_b.secret.sector_index)
                     });
 
                     for (user_id, token) in double_check_tokens {
@@ -445,11 +445,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             // punish the user move 1 step, token reveal and move outside the map
                             token.secret.r#type = Some(token.r#type.clone());
                             token.secret.meeting_index = 4;
-                            user.location = user.location.next(
-                                1,
-                                gs.map_type.sector_count(),
-                                &all_users_location,
-                            );
+                            user.location = user.location.next(1, &all_users_location);
                             result.push(format!(
                                 "{}'s token at {}, {} is wrong, user move 1 step",
                                 user.name, token.secret.sector_index, token.r#type
@@ -637,11 +633,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         // reveal all tokens
                         ss.user_tokens.iter_mut().for_each(|(_user_id, tokens)| {
                             tokens.iter_mut().for_each(|t| {
-                                if t.reveal_in_the_end() {
-                                    if !ss.map.meeting_check(t.secret.sector_index, &t.r#type) {
-                                        // wrong, move to 4
-                                        t.secret.meeting_index = 4;
-                                    }
+                                if t.reveal_in_the_end()
+                                    && !ss.map.meeting_check(t.secret.sector_index, &t.r#type)
+                                {
+                                    // wrong, move to 4
+                                    t.secret.meeting_index = 4;
                                 }
                             });
                         });

@@ -206,13 +206,11 @@ impl State {
                     }
                     user_state.can_locate = false;
                     user_state.last_move = false;
-                    let r = OperationResult::Locate(ss.map.locate_x(
+                    OperationResult::Locate(ss.map.locate_x(
                         l.index,
                         &l.pre_sector_type,
                         &l.next_sector_type,
-                    ));
-
-                    r
+                    ))
                 } else {
                     gs.user_move(&user.id, 5)?;
                     let r = OperationResult::Locate(ss.map.locate_x(
@@ -231,9 +229,7 @@ impl State {
                         terminator.last_move = false;
                         let terminator_location = terminator.location.clone();
                         gs.users.iter_mut().for_each(|user| {
-                            if user.location.index >= terminator_location.index {
-                                user.last_move = false;
-                            }
+                            user.last_move = user.location.index_lt(&terminator_location);
                         });
                         ss.terminator_location = Some(terminator_location);
                     }
@@ -249,26 +245,28 @@ impl State {
                     return Err(anyhow::anyhow!("sector {} already revealed", dp.index));
                 }
 
-                if ss.terminator_location.is_some() {
-                    let user_state = gs
-                        .users
-                        .iter_mut()
-                        .find(|u| u.id == user.id)
-                        .ok_or_else(|| anyhow::anyhow!("user not found"))?;
-                    let ti = ss.terminator_location.clone().unwrap().index;
-                    let ui = user_state.location.index;
-                    let before_ge_4 = (ti > ui && (ui + 4) <= ti)
-                        || (ui + 4 <= (ti + gs.map_type.sector_count()));
-                    if user_state.can_locate && before_ge_4 {
-                        user_state.can_locate = false;
-                    } else {
-                        user_state.last_move = false;
+                match &ss.terminator_location {
+                    Some(terminator_location) => {
+                        let user_state = gs
+                            .users
+                            .iter_mut()
+                            .find(|u| u.id == user.id)
+                            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+
+                        let before_more_then_4 = user_state.location.index_le4(terminator_location);
+                        if user_state.can_locate && before_more_then_4 {
+                            // user can either locate or publish twice
+                            user_state.can_locate = false;
+                        } else {
+                            user_state.last_move = false;
+                        }
+                        ss.last_move_publish_token(&user.id, dp.index, &dp.sector_type)?;
                     }
-                    ss.last_move_publish_token(&user.id, dp.index, &dp.sector_type)?;
-                } else {
+                    None => {
+                        ss.publish_token(&user.id, dp.index, &dp.sector_type)?;
+                    }
                 }
 
-                ss.publish_token(&user.id, dp.index, &dp.sector_type)?;
                 OperationResult::DoPublish((dp.index, dp.sector_type.clone()))
             }
         };
@@ -285,7 +283,6 @@ impl State {
             op => {
                 user_state.moves.push(op.clone());
                 user_state.moves_result.push(op_result.clone());
-                // gs.user_operation_record(&user.id, op, &op_result)?;
             }
         }
 
@@ -298,7 +295,7 @@ impl State {
             InnerRoomOp::Enter(id) => {
                 if let Some(gs) = self.get_game_state(id) {
                     if !gs.users.iter().any(|u| u.id == user.id) && gs.users.len() < 4 {
-                        let room_user = UserState::new(&user, gs.users.len() + 1);
+                        let room_user = UserState::placeholder(&user, gs.users.len() + 1);
                         gs.users.push(room_user);
                         res.push(gs.clone());
                     } else {

@@ -218,8 +218,9 @@ impl Token {
         self.placed && self.secret.sector_index == 0
     }
 
-    pub fn set_to_be_placed(&mut self) {
+    pub fn set_to_be_placed(&mut self) -> &mut Self {
         self.placed = true;
+        self
     }
 
     pub fn any_ready_checked(&self) -> bool {
@@ -247,7 +248,7 @@ impl Token {
         }
     }
 
-    pub fn reveal_in_the_end(&mut self) -> bool{
+    pub fn reveal_in_the_end(&mut self) -> bool {
         if self.placed && self.secret.r#type.is_none() {
             self.secret.r#type = Some(self.r#type.clone());
             return true;

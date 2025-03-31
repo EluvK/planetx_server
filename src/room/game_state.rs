@@ -77,7 +77,6 @@ impl GameStateResp {
     }
 
     pub fn user_move(&mut self, user_id: &str, delta: usize) -> anyhow::Result<()> {
-        let sector_count = self.map_type.sector_count();
         let all = self
             .users
             .iter()
@@ -88,24 +87,8 @@ impl GameStateResp {
             .iter_mut()
             .find(|u| u.id == user_id)
             .ok_or_else(|| anyhow::anyhow!("user not found"))?;
-        user_state.location = user_state.location.next(delta, sector_count, &all);
+        user_state.location = user_state.location.next(delta, &all);
 
-        Ok(())
-    }
-
-    pub fn user_operation_record(
-        &mut self,
-        user_id: &str,
-        operation: &Operation,
-        operation_result: &OperationResult,
-    ) -> anyhow::Result<()> {
-        let user_state = self
-            .users
-            .iter_mut()
-            .find(|u| u.id == user_id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
-        user_state.moves.push(operation.clone());
-        user_state.moves_result.push(operation_result.clone());
         Ok(())
     }
 }
@@ -136,12 +119,12 @@ pub struct UserState {
 }
 
 impl UserState {
-    pub fn new(user: &User, child_index: usize) -> Self {
+    pub fn placeholder(user: &User, child_index: usize) -> Self {
         UserState {
             id: user.id.clone(),
             name: user.name.clone(),
             ready: false,
-            location: UserLocationSequence::new(1, child_index),
+            location: UserLocationSequence::placeholder(1, child_index),
             last_move: true,
             can_locate: true,
             moves: vec![],
@@ -156,25 +139,49 @@ impl UserState {
 pub struct UserLocationSequence {
     pub index: usize,       // 1-12/1-18
     pub child_index: usize, // 1,2,3,4
+    #[serde(skip)]
+    max: usize, // 12/18
+    #[serde(skip)]
+    round: usize, // 0,1,2,3,...
 }
 
 impl UserLocationSequence {
-    pub fn new(index: usize, child_index: usize) -> Self {
-        UserLocationSequence { index, child_index }
-    }
-    pub fn next(
-        &mut self,
-        delta: usize,
-        max: usize,
-        all: &[UserLocationSequence],
-    ) -> UserLocationSequence {
-        let mut new_index = self.index + delta;
-        if new_index > max {
-            new_index -= max;
+    pub fn placeholder(index: usize, child_index: usize) -> Self {
+        UserLocationSequence {
+            index,
+            child_index,
+            max: 12, // default to 12, will be updated in the game state.
+            round: 0,
         }
-        let new_child_index = all.iter().filter(|s| s.index == new_index).count();
+    }
+    pub fn new(index: usize, child_index: usize, max: usize) -> Self {
+        UserLocationSequence {
+            index,
+            child_index,
+            max,
+            round: 0,
+        }
+    }
+    pub fn next(&mut self, delta: usize, all: &[UserLocationSequence]) -> UserLocationSequence {
+        let mut result = self.clone();
+        result.index = self.index + delta;
+        if result.index > result.max {
+            result.index -= result.max;
+            result.round += 1;
+        }
+        result.child_index = all.iter().filter(|&s| result.is_some_sector(s)).count() + 1;
+        result
+    }
 
-        UserLocationSequence::new(new_index, new_child_index + 1)
+    pub fn is_some_sector(&self, other: &UserLocationSequence) -> bool {
+        self.index == other.index && self.round == other.round
+    }
+
+    pub fn index_lt(&self, other: &UserLocationSequence) -> bool {
+        self.round * self.max + self.index < other.round * other.max + other.index
+    }
+    pub fn index_le4(&self, other: &UserLocationSequence) -> bool {
+        self.round * self.max + self.index <= other.round * other.max + other.index - 4
     }
 }
 
@@ -272,6 +279,7 @@ impl ServerGameState {
             .iter_mut()
             .find(|t| !t.placed && t.r#type == *r#type)
             .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+            .set_to_be_placed()
             .set_published(index);
         // *tokens = edited_tokens;
         Ok(())
