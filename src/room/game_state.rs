@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     map::{Clue, ClueSecret, Map, MapType, SecretToken, SectorType, Token},
     operation::{Operation, OperationResult},
+    room::OpError,
     server_state::User,
 };
 
@@ -76,7 +77,7 @@ impl GameStateResp {
         false
     }
 
-    pub fn user_move(&mut self, user_id: &str, delta: usize) -> anyhow::Result<()> {
+    pub fn user_move(&mut self, user_id: &str, delta: usize) -> Result<(), OpError> {
         let all = self
             .users
             .iter()
@@ -86,7 +87,7 @@ impl GameStateResp {
             .users
             .iter_mut()
             .find(|u| u.id == user_id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+            .ok_or(OpError::UserNotFoundInRoom)?;
         user_state.location = user_state.location.next(delta, &all);
 
         Ok(())
@@ -225,17 +226,17 @@ impl ServerGameState {
         &mut self,
         user_id: &str,
         input_tokens: &[SectorType],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), OpError> {
         let tokens = self
             .user_tokens
             .get_mut(user_id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+            .ok_or(OpError::UserNotFoundInRoom)?;
         let mut edited_tokens = tokens.clone();
         for it in input_tokens {
             edited_tokens
                 .iter_mut()
                 .find(|t| t.is_not_used(it))
-                .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+                .ok_or(OpError::TokenNotEnough)?
                 .set_to_be_placed();
         }
         *tokens = edited_tokens;
@@ -247,16 +248,16 @@ impl ServerGameState {
         user_id: &str,
         index: usize,
         r#type: &SectorType,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), OpError> {
         let tokens = self
             .user_tokens
             .get_mut(user_id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+            .ok_or(OpError::UserNotFoundInRoom)?;
         let mut edited_tokens = tokens.clone();
         edited_tokens
             .iter_mut()
             .find(|t| t.is_ready_published(r#type))
-            .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+            .ok_or(OpError::TokenNotEnough)?
             .set_published(index);
         *tokens = edited_tokens;
         Ok(())
@@ -267,7 +268,7 @@ impl ServerGameState {
         user_id: &str,
         index: usize,
         r#type: &SectorType,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), OpError> {
         // let tokens = self
         //     .user_tokens
         //     .get_mut(user_id)
@@ -275,10 +276,10 @@ impl ServerGameState {
         // let mut edited_tokens = tokens.clone();
         self.user_tokens
             .get_mut(user_id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?
+            .ok_or(OpError::UserNotFoundInRoom)?
             .iter_mut()
             .find(|t| !t.placed && t.r#type == *r#type)
-            .ok_or_else(|| anyhow::anyhow!("token not enough"))?
+            .ok_or(OpError::TokenNotEnough)?
             .set_to_be_placed()
             .set_published(index);
         // *tokens = edited_tokens;

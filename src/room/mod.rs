@@ -1,5 +1,7 @@
 mod game_state;
 pub use game_state::*;
+mod server_resp;
+pub use server_resp::*;
 
 use serde::{Deserialize, Serialize};
 

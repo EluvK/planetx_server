@@ -9,7 +9,10 @@ use tracing::info;
 use crate::{
     map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
-    room::{GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, UserState},
+    room::{
+        GameStage, GameState, GameStateResp, OpError, RoomError, RoomUserOperation,
+        ServerGameState, ServerResp, UserState,
+    },
 };
 
 type RoomId = String;
@@ -76,7 +79,10 @@ impl State {
         self.iter_game_state().for_each(|(room_id, gs)| {
             if gs.users.iter().any(|u| &u.id == &user.id) {
                 info!("upsert user: {} in room: {}", user.id, room_id);
-                socket.emit("server_resp", &format!("back in room {room_id}")).ok();
+                socket.leave_all();
+                socket
+                    .emit("server_resp", &ServerResp::rejoin_room(room_id.clone()))
+                    .ok();
                 socket.join(room_id.clone());
             }
         });
@@ -91,17 +97,17 @@ impl State {
         &mut self,
         user: User,
         operation: &Operation,
-    ) -> anyhow::Result<OperationResult> {
+    ) -> Result<OperationResult, OpError> {
+        // ) -> anyhow::Result<OperationResult> {
         let room_id = self
             .iter_game_state()
             .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("user not in any room"))?;
-        let (gs, ss) = self.get_state(&room_id).ok_or_else(|| {
-            anyhow::anyhow!("game state or ss not found for room id: {}", room_id)
-        })?;
+            .ok_or(OpError::UserNotFoundInRoom)?;
+        let (gs, ss) = self.get_state(&room_id).ok_or(OpError::GameNotFound)?;
+
         if !gs.check_waiting_for(&user.id) {
-            return Err(anyhow::anyhow!("not user turn"));
+            return Err(OpError::NotUsersTurn);
         }
 
         match (operation, &gs.game_stage) {
@@ -116,10 +122,7 @@ impl State {
             (Operation::DoPublish(_), GameStage::MeetingPublish) => {}
             (Operation::DoPublish(_) | Operation::Locate(_), GameStage::LastMove) => {}
             _rest => {
-                return Err(anyhow::anyhow!(
-                    "invalid operation at {:?} stage",
-                    &gs.game_stage
-                ));
+                return Err(OpError::InvalidMoveInStage);
             }
         }
 
@@ -132,16 +135,16 @@ impl State {
                     Some(s.end),
                     ss.map.size(),
                 ) {
-                    return Err(anyhow::anyhow!("invalid index"));
+                    return Err(OpError::InvalidIndex);
                 }
                 if s.sector_type == SectorType::X {
-                    return Err(anyhow::anyhow!("invalid sector type"));
+                    return Err(OpError::InvalidSectorType);
                 }
                 if s.sector_type == SectorType::Comet
                     && (!matches!(s.start, 2 | 3 | 5 | 7 | 11 | 13 | 17)
                         || !matches!(s.end, 2 | 3 | 5 | 7 | 11 | 13 | 17))
                 {
-                    return Err(anyhow::anyhow!("comet sector type start end must be prime"));
+                    return Err(OpError::InvalidIndexOfPrime);
                 }
                 let range_size = if s.start <= s.end {
                     s.end - s.start
@@ -156,7 +159,7 @@ impl State {
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
-                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    .ok_or(OpError::UserNotFoundInRoom)?;
                 if user_state
                     .moves
                     .iter()
@@ -164,7 +167,7 @@ impl State {
                     .count()
                     >= 2
                 {
-                    return Err(anyhow::anyhow!("user can not target more than 2 times"));
+                    return Err(OpError::TargetTimeExhausted);
                 }
                 if !validate_index_in_range(
                     gs.start_index,
@@ -173,7 +176,7 @@ impl State {
                     None,
                     ss.map.size(),
                 ) {
-                    return Err(anyhow::anyhow!("invalid index"));
+                    return Err(OpError::InvalidIndex);
                 }
                 gs.user_move(&user.id, 4)?;
                 OperationResult::Target(ss.map.target_sector(t.index))
@@ -183,13 +186,13 @@ impl State {
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
-                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    .ok_or(OpError::UserNotFoundInRoom)?;
                 if user_state
                     .moves
                     .last()
                     .is_some_and(|op| matches!(op, Operation::Research(_)))
                 {
-                    return Err(anyhow::anyhow!("user can not research continuously"));
+                    return Err(OpError::ResearchContiuously);
                 }
                 gs.user_move(&user.id, 1)?;
                 OperationResult::Research(
@@ -197,7 +200,7 @@ impl State {
                         .iter()
                         .find(|c| c.index == r.index)
                         .cloned()
-                        .ok_or_else(|| anyhow::anyhow!("clue not found"))?,
+                        .ok_or(OpError::InvalidClue)?,
                 )
             }
             Operation::Locate(l) => {
@@ -207,9 +210,9 @@ impl State {
                         .users
                         .iter_mut()
                         .find(|u| u.id == user.id)
-                        .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                        .ok_or(OpError::UserNotFoundInRoom)?;
                     if !user_state.can_locate {
-                        return Err(anyhow::anyhow!("user can not locate anymore"));
+                        return Err(OpError::EndGameCanNotLocate);
                     }
                     user_state.can_locate = false;
                     user_state.last_move = false;
@@ -232,7 +235,7 @@ impl State {
                             .users
                             .iter_mut()
                             .find(|u| u.id == user.id)
-                            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                            .ok_or(OpError::UserNotFoundInRoom)?;
                         terminator.last_move = false;
                         let terminator_location = terminator.location.clone();
                         gs.users.iter_mut().for_each(|user| {
@@ -249,7 +252,7 @@ impl State {
             }
             Operation::DoPublish(dp) => {
                 if ss.revealed_sector_indexs.contains(&dp.index) {
-                    return Err(anyhow::anyhow!("sector {} already revealed", dp.index));
+                    return Err(OpError::SectorAlreadyRevealed);
                 }
 
                 match &ss.terminator_location {
@@ -258,7 +261,7 @@ impl State {
                             .users
                             .iter_mut()
                             .find(|u| u.id == user.id)
-                            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                            .ok_or(OpError::UserNotFoundInRoom)?;
 
                         let before_more_then_4 = user_state.location.index_le4(terminator_location);
                         if user_state.can_locate && before_more_then_4 {
@@ -282,7 +285,7 @@ impl State {
             .users
             .iter_mut()
             .find(|u| u.id == user.id)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+            .ok_or(OpError::UserNotFoundInRoom)?;
         match operation {
             Operation::ReadyPublish(_) | Operation::DoPublish(_) => {
                 user_state.moves_result.push(op_result.clone());
@@ -339,7 +342,7 @@ impl State {
         socket: SocketRef,
         user: User,
         room_op: RoomUserOperation,
-    ) -> anyhow::Result<Vec<GameStateResp>> {
+    ) -> Result<Vec<GameStateResp>, RoomError> {
         match room_op {
             RoomUserOperation::Create => {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
@@ -367,22 +370,23 @@ impl State {
             RoomUserOperation::Edit(new_info) => {
                 let gs = self
                     .get_game_state(&new_info.room_id)
-                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                    .ok_or(RoomError::RoomNotFound)?;
                 gs.map_seed = new_info.map_seed;
                 gs.map_type = new_info.map_type;
                 gs.end_index = gs.map_type.sector_count() / 2;
                 Ok(vec![gs.clone()])
             }
             RoomUserOperation::Join(id) => {
-                let gs = self
-                    .get_game_state(&id)
-                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                let gs = self.get_game_state(&id).ok_or(RoomError::RoomNotFound)?;
                 if gs.status != GameState::NotStarted && !gs.users.iter().any(|u| u.id == user.id) {
-                    return Err(anyhow::anyhow!("room already started, can not join"));
+                    return Err(RoomError::RoomStarted);
                 }
                 if gs.users.iter().any(|u| u.id == user.id) {
                     socket.join(id);
                     return Ok(vec![gs.clone()]);
+                }
+                if gs.users.len() >= 4 {
+                    return Err(RoomError::RoomFull);
                 }
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
                 socket.leave_all();
@@ -395,26 +399,22 @@ impl State {
                 Ok(self._room_op(user, InnerRoomOp::Leave(&id)))
             }
             RoomUserOperation::Prepare(id) => {
-                let gs = self
-                    .get_game_state(&id)
-                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                let gs = self.get_game_state(&id).ok_or(RoomError::RoomNotFound)?;
                 let user = gs
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
-                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    .ok_or(RoomError::UserNotFoundInRoom)?;
                 user.ready = true;
                 Ok(vec![gs.clone()])
             }
             RoomUserOperation::Unprepare(id) => {
-                let gs = self
-                    .get_game_state(&id)
-                    .ok_or_else(|| anyhow::anyhow!("room not found"))?;
+                let gs = self.get_game_state(&id).ok_or(RoomError::RoomNotFound)?;
                 let user = gs
                     .users
                     .iter_mut()
                     .find(|u| u.id == user.id)
-                    .ok_or_else(|| anyhow::anyhow!("user not found"))?;
+                    .ok_or(RoomError::UserNotFoundInRoom)?;
                 user.ready = false;
                 Ok(vec![gs.clone()])
             }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, vec};
 use crate::{
     operation::Operation,
     room::{
-        GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState,
+        GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, ServerResp,
         UserLocationSequence, UserState,
     },
     server_state::{StateRef, User},
@@ -35,7 +35,9 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
                 .await
                 .upsert_user(socket.id.to_string(), user.0.clone(), socket.clone());
             info!(ns = "socket.io", ?socket.id, "auth {:?}", user.0);
-            socket.emit("server_resp", "auth success").ok();
+            socket
+                .emit("server_resp", &ServerResp::auth_success_version())
+                .ok();
         },
     );
 
@@ -125,7 +127,7 @@ async fn handle_op(_io: SocketIo, socket: SocketRef, state: StateRef, op: Operat
         }
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "op error");
-            socket.emit("server_resp", &format!("op error {e}")).ok();
+            socket.emit("server_resp", &ServerResp::OpErrors(e)).ok();
         }
     }
 }
@@ -163,9 +165,7 @@ async fn handle_room(_io: SocketIo, socket: SocketRef, state: StateRef, op: Room
 
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "room op error");
-            socket
-                .emit("server_resp", &format!("room op error {e}"))
-                .ok();
+            socket.emit("server_resp", &ServerResp::RoomErrors(e)).ok();
         }
     }
 }
