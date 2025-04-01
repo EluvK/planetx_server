@@ -73,6 +73,13 @@ impl State {
     }
 
     pub fn upsert_user(&mut self, socket_id: String, user: User, socket: SocketRef) {
+        self.iter_game_state().for_each(|(room_id, gs)| {
+            if gs.users.iter().any(|u| &u.id == &user.id) {
+                info!("upsert user: {} in room: {}", user.id, room_id);
+                socket.emit("server_resp", &format!("back in room {room_id}")).ok();
+                socket.join(room_id.clone());
+            }
+        });
         self.users.insert(socket_id, (socket, user));
     }
 

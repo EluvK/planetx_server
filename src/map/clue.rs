@@ -154,7 +154,7 @@ impl ClueGenerator {
         }
         let mut xres = vec![];
         let mut cnt = 0;
-        while !check_x_space_only(&xres, &self.sectors) {
+        while xres.is_empty() || !check_x_space_only(&res, &xres, &self.sectors).is_empty() {
             xres.clear();
             while xres.len() < self.map_type.xclue_points().len() {
                 let index = match xres.len() {
@@ -200,19 +200,39 @@ impl ClueGenerator {
 
     fn get_rand_conn(&mut self, is_x: bool) -> ClueConnection {
         let easy = matches!(self.map_type, MapType::Standard) || is_x;
-        match self.rng.random_range(0..=11) {
-            0 | 1 => ClueConnection::AllAdjacent,
-            2 | 3 => ClueConnection::OneAdjacent,
-            4 | 5 => ClueConnection::NotAdjacent,
-            6 | 7 => ClueConnection::OneOpposite,
-            8 | 9 => ClueConnection::NotOpposite,
-            10 => {
-                ClueConnection::AllInRange(self.rng.random_range(if easy { 2..=4 } else { 4..=6 }))
+
+        let distributions = [
+            (200, ClueConnection::AllAdjacent),
+            (10, ClueConnection::OneAdjacent),
+            (16, ClueConnection::NotAdjacent),
+            (10, ClueConnection::OneOpposite),
+            (12, ClueConnection::NotOpposite),
+            (
+                7,
+                ClueConnection::AllInRange(self.rng.random_range(if easy { 2..=4 } else { 4..=6 })),
+            ),
+            (
+                64,
+                ClueConnection::NotInRange(self.rng.random_range(if easy { 3..=4 } else { 2..=3 })),
+            ),
+        ];
+
+        // 计算总和
+        let sum: i32 = distributions.iter().map(|(weight, _)| *weight).sum();
+
+        // 生成随机数
+        let mut r = self.rng.random_range(0..sum);
+
+        // 根据权重选择
+        for (weight, conn) in distributions.iter() {
+            if r < *weight {
+                return conn.clone();
             }
-            _ => {
-                ClueConnection::NotInRange(self.rng.random_range(if easy { 3..=4 } else { 2..=3 }))
-            }
+            r -= *weight;
         }
+        assert!(false, "should not reach here"); // 理论上不会执行到这里
+        // 默认情况（理论上不会执行到这里）
+        distributions.last().unwrap().1.clone()
     }
 
     fn check_clue(
@@ -222,19 +242,19 @@ impl ClueGenerator {
         object: &SectorType,
         conn: &ClueConnection,
     ) -> bool {
+        // same clue secret
+        let try_secret = if object == subject || *object == SectorType::Space {
+            format!("{}", subject)
+        } else {
+            format!("{} {}", subject, object)
+        };
         for clue in clues {
-            // same clue secret
-            let try_secret = if object == subject || *object == SectorType::Space {
-                format!("{}", subject)
-            } else {
-                format!("{} {}", subject, object)
-            };
             if clue.as_secret() == try_secret {
                 return false;
             }
 
             // same clue pair
-            if clue.subject == *subject && clue.object == *object {
+            if clue.subject == *object && clue.object == *subject {
                 return false;
             }
             if clue.subject == *object
@@ -252,6 +272,12 @@ impl ClueGenerator {
             .count()
             >= 3
         {
+            return false;
+        }
+        if clues.iter().filter(|x| x.subject == *subject).count() >= 2 {
+            return false;
+        }
+        if clues.iter().filter(|x| x.object == *object).count() >= 2 {
             return false;
         }
         if clues
@@ -361,29 +387,31 @@ impl ClueGenerator {
         }
     }
 }
-fn check_x_space_only(xclues: &[Clue], sectors: &Sectors) -> bool {
-    if xclues.is_empty() {
-        return false;
-    }
+fn check_x_space_only(clues: &[Clue], xclues: &[Clue], sectors: &Sectors) -> Vec<usize> {
     // println!("clues: {:?}", xclues);
+    let defaults = vec![
+        Clue {
+            index: ClueEnum::A,
+            subject: SectorType::X,
+            object: SectorType::DwarfPlanet,
+            conn: ClueConnection::NotAdjacent,
+        },
+        Clue {
+            index: ClueEnum::A,
+            subject: SectorType::Nebula,
+            object: SectorType::Space,
+            conn: ClueConnection::AllAdjacent,
+        },
+    ];
+    let all_clues = clues
+        .iter()
+        .chain(xclues.iter())
+        .chain(defaults.iter())
+        .collect::<Vec<_>>();
     let possible_x: Vec<_> = sectors
         .data
         .iter()
         .filter(|x| x.r#type == SectorType::Space)
-        .filter(|&x| {
-            !(sectors.next(x.index).r#type != SectorType::DwarfPlanet
-                && sectors.prev(x.index).r#type != SectorType::DwarfPlanet)
-        })
-        .filter(|&x| {
-            let next = sectors.next(x.index);
-            let pre = sectors.prev(x.index);
-            !((next.r#type == SectorType::Nebula
-                && sectors.next(next.index).r#type != SectorType::Space
-                && sectors.next(next.index).r#type != SectorType::X)
-                || (pre.r#type == SectorType::Nebula
-                    && sectors.prev(pre.index).r#type != SectorType::Space
-                    && sectors.prev(pre.index).r#type != SectorType::X))
-        })
         .filter(|&x| {
             let mut temp_sectors = sectors.clone();
             // swap x with this space
@@ -393,41 +421,79 @@ fn check_x_space_only(xclues: &[Clue], sectors: &Sectors) -> bool {
                 }
             });
             temp_sectors.data[x.index - 1].r#type = SectorType::X;
-            // println!("temp_sectors:");
-            // for t in temp_sectors.data.iter() {
-            //     println!("{}", t);
-            // }
 
-            !xclues.iter().all(|clue| match (&clue.conn, &clue.object) {
-                (ClueConnection::AllAdjacent, o) | (ClueConnection::OneAdjacent, o) => {
-                    temp_sectors.next(x.index).r#type == *o
-                        || temp_sectors.prev(x.index).r#type == *o
-                }
-                (ClueConnection::NotAdjacent, o) => {
-                    temp_sectors.next(x.index).r#type != *o
-                        && temp_sectors.prev(x.index).r#type != *o
-                }
-                (ClueConnection::OneOpposite, o) => temp_sectors.opposite(x.index).r#type == *o,
-                (ClueConnection::NotOpposite, o) => temp_sectors.opposite(x.index).r#type != *o,
-                (ClueConnection::AllInRange(range), o) => {
-                    temp_sectors.check_range_exist(x.index, o, *range)
-                }
-                (ClueConnection::NotInRange(range), o) => {
-                    !temp_sectors.check_range_exist(x.index, o, *range)
-                }
-            })
+            let check_clue_with_sectors = |clue: &Clue, sectors: &Sectors| match &clue.conn {
+                ClueConnection::AllAdjacent => sectors
+                    .data
+                    .iter()
+                    .filter(|s| s.r#type == clue.subject)
+                    .all(|s| {
+                        sectors.prev(s.index).r#type == clue.object
+                            || sectors.next(s.index).r#type == clue.object
+                    }),
+                ClueConnection::OneAdjacent => sectors
+                    .data
+                    .iter()
+                    .filter(|s| s.r#type == clue.subject)
+                    .any(|s| {
+                        sectors.prev(s.index).r#type == clue.object
+                            || sectors.next(s.index).r#type == clue.object
+                    }),
+                ClueConnection::NotAdjacent => sectors
+                    .data
+                    .iter()
+                    .filter(|s| s.r#type == clue.subject)
+                    .all(|s| {
+                        sectors.prev(s.index).r#type != clue.object
+                            && sectors.next(s.index).r#type != clue.object
+                    }),
+                ClueConnection::OneOpposite => sectors.data.iter().any(|s| {
+                    s.r#type == clue.subject && sectors.opposite(s.index).r#type == clue.object
+                }),
+                ClueConnection::NotOpposite => sectors.data.iter().all(|s| {
+                    s.r#type != clue.subject || sectors.opposite(s.index).r#type != clue.object
+                }),
+                ClueConnection::AllInRange(range) => sectors
+                    .data
+                    .iter()
+                    .filter(|s| s.r#type == clue.subject)
+                    .all(|s| sectors.check_range_exist(s.index, &clue.object, *range)),
+                ClueConnection::NotInRange(range) => sectors
+                    .data
+                    .iter()
+                    .filter(|s| s.r#type == clue.subject)
+                    .all(|s| !sectors.check_range_exist(s.index, &clue.object, *range)),
+            };
+
+            all_clues
+                .iter()
+                .all(|clue| check_clue_with_sectors(clue, &temp_sectors))
         })
+        .map(|f| f.index)
         .collect();
 
+    // println!(
+    //     "clues: {:?}",
+    //     clues.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+    // );
+    // println!(
+    //     "xclues: {:?}",
+    //     xclues.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+    // );
     // println!("possible_x: {:?}", possible_x);
-    possible_x.is_empty()
+    possible_x
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use rand::RngCore;
 
-    use crate::map::model::{Map, MapType};
+    use crate::map::{
+        Sector,
+        model::{Map, MapType},
+    };
 
     #[allow(unused_imports)]
     use super::*;
@@ -436,28 +502,37 @@ mod tests {
     fn test_clue() {
         let mut sum = 0;
         let mut last_failed_seed = 0;
-        for seed in 1..1000 {
+        let mut clue_type_sum = BTreeMap::new();
+        for i in 0..=6 {
+            clue_type_sum.insert(i, 0);
+        }
+        for seed in 0..300 {
             dbg!(seed);
             let mut rng = SmallRng::seed_from_u64(seed);
             loop {
-                let map = Map::new(rng.clone(), MapType::Standard).unwrap();
-                // dbg!(&map.sectors.data);
+                let map = Map::new(rng.clone(), MapType::Expert).unwrap();
                 let mut cg = ClueGenerator::new(seed, map.sectors.clone(), map.r#type.clone());
-                for sector in &map.sectors.data {
-                    println!("{}", sector);
-                }
+                // for sector in &map.sectors.data {
+                // println!("{}", sector);
+                // }
                 if let Ok((clues, xclues)) = cg.generate_clues() {
-                    println!("clues:");
+                    println!("clues: {}", clues.len());
                     for clue in clues.iter() {
-                        // match clue.conn {
-                        //     ClueConnection::NotInRange(_) => {
-                        //         println!("{: <10}: {}", clue.as_secret(), clue);
-                        //     }
-                        //     _ => (),
-                        // }
+                        let index = match clue.conn {
+                            ClueConnection::AllAdjacent => 0,
+                            ClueConnection::OneAdjacent => 1,
+                            ClueConnection::NotAdjacent => 2,
+                            ClueConnection::OneOpposite => 3,
+                            ClueConnection::NotOpposite => 4,
+                            ClueConnection::AllInRange(_) => 5,
+                            ClueConnection::NotInRange(_) => 6,
+                        };
+                        let count = clue_type_sum.entry(index).or_insert(0);
+                        *count += 1;
+
                         println!("{: <10}: {}", clue.as_secret(), clue);
                     }
-                    println!("xclues:");
+                    println!("xclues: {}", xclues.len());
                     for clue in xclues.iter() {
                         println!("{: <10}: {}", clue.as_secret(), clue);
                     }
@@ -469,9 +544,107 @@ mod tests {
                     rng.next_u32(); // next seed
                 }
             }
-            // dbg!(clues);
         }
         println!("failed sum: {}", sum);
         println!("last failed seed: {}", last_failed_seed);
+        for (i, count) in clue_type_sum.iter() {
+            println!("clue type {}: {}", i, count);
+        }
+    }
+
+    #[test]
+    fn test_check_x_space_only() {
+        #[rustfmt::skip]
+        let s = Sectors{ data: vec![
+            Sector { index: 1, r#type: SectorType::Asteroid },
+            Sector { index: 2, r#type: SectorType::X },
+            Sector { index: 3, r#type: SectorType::Space },
+            Sector { index: 4, r#type: SectorType::Nebula },
+            Sector { index: 5, r#type: SectorType::DwarfPlanet },
+        ]};
+        assert_eq!(
+            check_x_space_only(
+                &[],
+                &[Clue {
+                    index: ClueEnum::X1,
+                    subject: SectorType::X,
+                    object: SectorType::DwarfPlanet,
+                    conn: ClueConnection::NotAdjacent
+                }],
+                &s
+            ),
+            Vec::<usize>::new()
+        );
+        #[rustfmt::skip]
+        let s = Sectors{ data: vec![
+            Sector { index: 1, r#type: SectorType::Asteroid },
+            Sector { index: 2, r#type: SectorType::X },
+            Sector { index: 3, r#type: SectorType::Space },
+            Sector { index: 4, r#type: SectorType::Nebula },
+            Sector { index: 5, r#type: SectorType::Space },
+            Sector { index: 6, r#type: SectorType::DwarfPlanet },
+        ]};
+        assert_eq!(
+            check_x_space_only(
+                &[],
+                &[Clue {
+                    index: ClueEnum::X1,
+                    subject: SectorType::X,
+                    object: SectorType::DwarfPlanet,
+                    conn: ClueConnection::NotAdjacent
+                }],
+                &s
+            ),
+            vec![3]
+        );
+        #[rustfmt::skip]
+        let s = Sectors{ data: vec![
+            Sector { index: 1, r#type: SectorType::Asteroid },
+            Sector { index: 2, r#type: SectorType::X },
+            Sector { index: 3, r#type: SectorType::Nebula },
+            Sector { index: 4, r#type: SectorType::Space },
+            Sector { index: 5, r#type: SectorType::Space },
+            Sector { index: 6, r#type: SectorType::DwarfPlanet },
+        ]};
+        assert_eq!(
+            check_x_space_only(
+                &[],
+                &[Clue {
+                    index: ClueEnum::X1,
+                    subject: SectorType::X,
+                    object: SectorType::DwarfPlanet,
+                    conn: ClueConnection::NotAdjacent
+                }],
+                &s
+            ),
+            vec![4]
+        );
+        #[rustfmt::skip]
+        let s = Sectors{ data: vec![
+            Sector { index: 1, r#type: SectorType::Space },
+            Sector { index: 2, r#type: SectorType::X },
+            Sector { index: 3, r#type: SectorType::Nebula },
+            Sector { index: 4, r#type: SectorType::Space },
+            Sector { index: 5, r#type: SectorType::Asteroid },
+            Sector { index: 6, r#type: SectorType::Asteroid },
+        ]};
+        assert_eq!(
+            check_x_space_only(
+                &[Clue {
+                    index: ClueEnum::A,
+                    subject: SectorType::Asteroid,
+                    object: SectorType::Space,
+                    conn: ClueConnection::AllAdjacent
+                }],
+                &[Clue {
+                    index: ClueEnum::X1,
+                    subject: SectorType::X,
+                    object: SectorType::DwarfPlanet,
+                    conn: ClueConnection::NotAdjacent
+                }],
+                &s
+            ),
+            Vec::<usize>::new()
+        );
     }
 }
