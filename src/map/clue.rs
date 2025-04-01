@@ -516,7 +516,7 @@ mod tests {
                 // println!("{}", sector);
                 // }
                 if let Ok((clues, xclues)) = cg.generate_clues() {
-                    println!("clues: {}", clues.len());
+                    // println!("clues: {}", clues.len());
                     for clue in clues.iter() {
                         let index = match clue.conn {
                             ClueConnection::AllAdjacent => 0,
@@ -530,12 +530,21 @@ mod tests {
                         let count = clue_type_sum.entry(index).or_insert(0);
                         *count += 1;
 
-                        println!("{: <10}: {}", clue.as_secret(), clue);
+                        // if matches!(clue.conn, ClueConnection::AllInRange(_))
+                        //     && clue.object == clue.subject
+                        // {
+                        //     println!("clue: {: <10} {}", clue.as_secret(), clue);
+                        //     for sector in &map.sectors.data {
+                        //         println!("sector: {}", sector);
+                        //     }
+                        // }
+
+                        // println!("{: <10}: {}", clue.as_secret(), clue);
                     }
-                    println!("xclues: {}", xclues.len());
-                    for clue in xclues.iter() {
-                        println!("{: <10}: {}", clue.as_secret(), clue);
-                    }
+                    // println!("xclues: {}", xclues.len());
+                    // for clue in xclues.iter() {
+                    //     println!("{: <10}: {}", clue.as_secret(), clue);
+                    // }
                     break;
                 } else {
                     println!("failed at seed {}", seed);
