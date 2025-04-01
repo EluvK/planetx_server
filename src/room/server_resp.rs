@@ -33,7 +33,7 @@ pub enum RoomError {
 pub enum OpError {
     UserNotFoundInRoom,
     GameNotFound,
-    
+
     NotUsersTurn,
     InvalidMoveInStage,
     InvalidIndex,

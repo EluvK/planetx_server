@@ -230,7 +230,7 @@ impl ClueGenerator {
             }
             r -= *weight;
         }
-        assert!(false, "should not reach here"); // 理论上不会执行到这里
+        // assert!(false, "should not reach here"); // 理论上不会执行到这里
         // 默认情况（理论上不会执行到这里）
         distributions.last().unwrap().1.clone()
     }
@@ -389,7 +389,7 @@ impl ClueGenerator {
 }
 fn check_x_space_only(clues: &[Clue], xclues: &[Clue], sectors: &Sectors) -> Vec<usize> {
     // println!("clues: {:?}", xclues);
-    let defaults = vec![
+    let defaults = [
         Clue {
             index: ClueEnum::A,
             subject: SectorType::X,
