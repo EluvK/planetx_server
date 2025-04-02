@@ -86,6 +86,17 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
                         socket.emit("op_result", re).ok();
                     }
 
+                    // emit xclue to user if after xclue point
+                    gs.map_type
+                        .xclue_points()
+                        .iter()
+                        .enumerate()
+                        .for_each(|(i, (index, _))| {
+                            if gs.round > 1 || gs.start_index > *index {
+                                socket.emit("xclue", &vec![ss.x_clues[i].clone()]).ok();
+                            }
+                        });
+
                     let Some(tokens) = ss.user_tokens.get(&user.id) else {
                         continue;
                     };
@@ -196,6 +207,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     // gs.hint = Some("Game is starting".to_string());
                     // broadcast_room_game_state(&io, gs).await;
                     gs.start_index = 1;
+                    gs.round = 1;
                     gs.end_index = gs.map_type.sector_count() / 2;
                     gs.users.shuffle(&mut SmallRng::seed_from_u64(gs.map_seed));
                     let mut user_tokens = HashMap::new();
@@ -277,6 +289,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             .ok();
                         continue;
                     };
+                    gs.round += if next_point.index < gs.start_index {
+                        1
+                    } else {
+                        0
+                    };
                     gs.start_index = next_point.index;
                     gs.end_index = next_point.index + gs.map_type.sector_count() / 2 - 1;
                     if gs.end_index > gs.map_type.sector_count() {
@@ -330,6 +347,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 continue;
                             };
                             gs.hint = Some("X clue time".to_string());
+                            gs.round += if second_point.index < gs.start_index {
+                                1
+                            } else {
+                                0
+                            };
                             gs.start_index = second_point.index;
                             gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
                             if gs.end_index > gs.map_type.sector_count() {
@@ -471,6 +493,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             .ok();
                         continue;
                     };
+                    gs.round += if second_point.index < gs.start_index {
+                        1
+                    } else {
+                        0
+                    };
                     gs.start_index = second_point.index;
                     gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
                     if gs.end_index > gs.map_type.sector_count() {
@@ -483,17 +510,8 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                 // each users should publish tokens
                 // check publish first then proposal, we could update tokens after proposal
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::MeetingPublish {
-                    let mut user_points =
-                        gs.users.iter().map(Into::into).collect::<Vec<PointInfo>>();
-                    user_points.sort_by(|a, b| {
-                        a.index
-                            .cmp(&b.index)
-                            .then_with(|| a.child_index.cmp(&b.child_index))
-                    });
-                    info!(?user_points, "user points");
-
                     let mut need_publish = false;
-                    for id in user_points.iter().filter_map(|p| {
+                    for id in sort_users_points(gs).iter().filter_map(|p| {
                         if let PointType::User(id) = &p.r#type {
                             Some(id.clone())
                         } else {
@@ -565,6 +583,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                     .ok();
                                 continue;
                             };
+                            gs.round += if second_point.index < gs.start_index {
+                                1
+                            } else {
+                                0
+                            };
                             gs.start_index = second_point.index;
                             gs.end_index = second_point.index + gs.map_type.sector_count() / 2 - 1;
                             if gs.end_index > gs.map_type.sector_count() {
@@ -589,18 +612,11 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                 }
 
                 if gs.status == GameState::AutoMove && gs.game_stage == GameStage::LastMove {
-                    // int the last move, everyone before the winner will have one chance to move
+                    // in the last move, everyone before the winner will have one chance to move
                     // and then the game will end
-                    let mut user_points =
-                        gs.users.iter().map(Into::into).collect::<Vec<PointInfo>>();
-                    user_points.sort_by(|a, b| {
-                        a.index
-                            .cmp(&b.index)
-                            .then_with(|| a.child_index.cmp(&b.child_index))
-                    });
-                    info!(?user_points, "user points");
+
                     let mut need_wait_last_move = false;
-                    for id in user_points.iter().filter_map(|p| {
+                    for id in sort_users_points(gs).iter().filter_map(|p| {
                         if let PointType::User(id) = &p.r#type {
                             Some(id.clone())
                         } else {
@@ -668,6 +684,7 @@ fn find_next_point(gs: &mut GameStateResp, next_next: bool) -> Option<PointInfo>
                     r#type: PointType::Meeting,
                     index,
                     child_index,
+                    round: 0, // not used
                 }),
         )
         .chain(
@@ -678,6 +695,7 @@ fn find_next_point(gs: &mut GameStateResp, next_next: bool) -> Option<PointInfo>
                     r#type: PointType::XClue,
                     index,
                     child_index,
+                    round: 1, // not used
                 }),
         )
         .collect::<Vec<_>>();
@@ -692,9 +710,25 @@ fn find_next_point(gs: &mut GameStateResp, next_next: bool) -> Option<PointInfo>
     all_points
         .iter()
         .cycle()
-        .skip_while(|p| p.index < gs.start_index)
+        .skip_while(|p| p.index < gs.start_index || (gs.round > 1 && p.round == 1))
         .nth(index)
         .cloned()
+}
+
+fn sort_users_points(gs: &mut GameStateResp) -> Vec<PointInfo> {
+    let mut all_user_points: Vec<PointInfo> = gs.users.iter().map(Into::into).collect::<Vec<_>>();
+    all_user_points.sort_by(|a, b| {
+        // round , then index, then child_index
+        a.round.cmp(&b.round).then_with(|| {
+            if a.index == b.index {
+                a.child_index.cmp(&b.child_index)
+            } else {
+                a.index.cmp(&b.index)
+            }
+        })
+    });
+    info!(?all_user_points, "all user points");
+    all_user_points
 }
 
 async fn broadcast_room_game_state(io: &SocketIo, gs: &mut GameStateResp) {
@@ -750,6 +784,7 @@ struct PointInfo {
     r#type: PointType,
     index: usize,
     child_index: usize,
+    round: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -765,6 +800,7 @@ impl From<&UserState> for PointInfo {
             r#type: PointType::User(user.id.clone()),
             index: user.location.index,
             child_index: user.location.child_index,
+            round: user.location.round,
         }
     }
 }

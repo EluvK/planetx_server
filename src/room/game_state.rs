@@ -18,6 +18,8 @@ pub struct GameStateResp {
     pub hint: Option<String>,
     pub users: Vec<UserState>,
     pub start_index: usize,
+    #[serde(skip)]
+    pub round: usize,
     pub end_index: usize,
     pub map_seed: u64,
     pub map_type: MapType,
@@ -44,6 +46,7 @@ impl GameStateResp {
             users: vec![],
             start_index: 1,
             end_index: 6,
+            round: 1,
             map_seed: rand::random::<u32>() as u64,
             map_type: MapType::Standard,
         }
@@ -58,6 +61,7 @@ impl GameStateResp {
             users: vec![],
             start_index: 1,
             end_index: 6,
+            round: 1,
             map_seed: 0,
             map_type: MapType::Standard,
         }
@@ -141,9 +145,9 @@ pub struct UserLocationSequence {
     pub index: usize,       // 1-12/1-18
     pub child_index: usize, // 1,2,3,4
     #[serde(skip)]
-    max: usize, // 12/18
+    pub max: usize, // 12/18
     #[serde(skip)]
-    round: usize, // 0,1,2,3,...
+    pub round: usize, // started at 1. x clue is only for round 1. 0 means every round, then
 }
 
 impl UserLocationSequence {
@@ -152,7 +156,7 @@ impl UserLocationSequence {
             index,
             child_index,
             max: 12, // default to 12, will be updated in the game state.
-            round: 0,
+            round: 1,
         }
     }
     pub fn new(index: usize, child_index: usize, max: usize) -> Self {
@@ -160,7 +164,7 @@ impl UserLocationSequence {
             index,
             child_index,
             max,
-            round: 0,
+            round: 1,
         }
     }
     pub fn next(&mut self, delta: usize, all: &[UserLocationSequence]) -> UserLocationSequence {
