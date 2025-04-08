@@ -23,6 +23,7 @@ pub struct GameStateResp {
     pub end_index: usize,
     pub map_seed: u64,
     pub map_type: MapType,
+    pub game_result: Option<Vec<UserResultSummary>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -49,6 +50,7 @@ impl GameStateResp {
             round: 1,
             map_seed: rand::random::<u32>() as u64,
             map_type: MapType::Standard,
+            game_result: None,
         }
     }
 
@@ -64,6 +66,7 @@ impl GameStateResp {
             round: 1,
             map_seed: 0,
             map_type: MapType::Standard,
+            game_result: None,
         }
     }
 
@@ -140,6 +143,20 @@ impl UserState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserResultSummary {
+    pub id: String,
+    pub name: String,
+    pub sum: usize,
+    pub first: usize,
+    pub comet: usize,        // 彗星得分
+    pub asteroid: usize,     // 小行星得分
+    pub dwarf_planet: usize, // 矮行星得分
+    pub nebula: usize,       // 星云得分
+    pub x: usize,            // x clue
+    pub step: usize,         // 终局位置
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct UserLocationSequence {
     pub index: usize,       // 1-12/1-18
@@ -187,6 +204,10 @@ impl UserLocationSequence {
     }
     pub fn index_le4(&self, other: &UserLocationSequence) -> bool {
         self.round * self.max + self.index <= other.round * other.max + other.index - 4
+    }
+
+    pub fn step(&self) -> usize {
+        (self.round - 1) * self.max + self.index
     }
 }
 

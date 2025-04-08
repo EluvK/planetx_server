@@ -1,10 +1,11 @@
 use std::{collections::HashMap, vec};
 
 use crate::{
-    operation::Operation,
+    map::{MapType, SectorType},
+    operation::{Operation, OperationResult},
     room::{
         GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, ServerResp,
-        UserLocationSequence, UserState,
+        UserLocationSequence, UserResultSummary, UserState,
     },
     server_state::{StateRef, User},
 };
@@ -657,6 +658,107 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                                 }
                             });
                         });
+
+                        let mut results = vec![];
+                        let terminator_step =
+                            ss.terminator_location.as_ref().map_or(0, |t| t.step());
+                        let map_type = ss.map.r#type.clone();
+                        for user_state in gs.users.iter() {
+                            let id = user_state.id.clone();
+                            let comet = ss.user_tokens.get(&id).map_or(0, |tokens| {
+                                tokens
+                                    .iter()
+                                    .filter(|t| t.is_success_located(SectorType::Comet))
+                                    .count()
+                            });
+                            let asteroid = ss.user_tokens.get(&id).map_or(0, |tokens| {
+                                tokens
+                                    .iter()
+                                    .filter(|t| t.is_success_located(SectorType::Asteroid))
+                                    .count()
+                            });
+                            let dwarf_planet = ss.user_tokens.get(&id).map_or(0, |tokens| {
+                                tokens
+                                    .iter()
+                                    .filter(|t| t.is_success_located(SectorType::DwarfPlanet))
+                                    .count()
+                            });
+                            let nebula = ss.user_tokens.get(&id).map_or(0, |tokens| {
+                                tokens
+                                    .iter()
+                                    .filter(|t| t.is_success_located(SectorType::Nebula))
+                                    .count()
+                            });
+                            let mut first = 0;
+                            for s_index in 1..=gs.map_type.sector_count() {
+                                let mut sector_tokens = ss
+                                    .user_tokens
+                                    .iter()
+                                    .filter_map(|(_user_id, tokens)| {
+                                        tokens.iter().find(|t| {
+                                            t.secret.sector_index == s_index
+                                                && t.is_success_located_any()
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+                                sector_tokens.sort_by(|a, b| {
+                                    a.secret.meeting_index.cmp(&b.secret.meeting_index)
+                                });
+                                let first_meeting_index = sector_tokens
+                                    .first()
+                                    .map(|t| t.secret.meeting_index)
+                                    .unwrap_or(0);
+                                if sector_tokens
+                                    .iter()
+                                    .find(|t| {
+                                        t.secret.meeting_index == first_meeting_index
+                                            && t.secret.user_id == id
+                                    })
+                                    .is_some()
+                                {
+                                    first += 1;
+                                }
+                            }
+                            let step = user_state.location.step();
+                            let x = user_state.moves_result.last().map_or(0, |r| match r {
+                                &OperationResult::Locate(true) => {
+                                    if terminator_step == step {
+                                        10
+                                    } else {
+                                        2 * (terminator_step.saturating_sub(step))
+                                    }
+                                }
+                                _rest => 0,
+                            });
+
+                            let sum = match map_type {
+                                MapType::Standard => dwarf_planet * 4,
+                                MapType::Expert => dwarf_planet * 2,
+                            } + asteroid * 2
+                                + comet * 3
+                                + nebula * 4
+                                + first
+                                + x;
+
+                            results.push(UserResultSummary {
+                                id: id.clone(),
+                                name: user_state.name.clone(),
+                                sum,
+                                first,
+                                comet,
+                                asteroid,
+                                dwarf_planet,
+                                nebula,
+                                x,
+                                step,
+                            });
+                        }
+
+                        results
+                            .sort_by(|a, b| a.sum.cmp(&b.sum).then_with(|| a.first.cmp(&b.first)));
+                        results.reverse();
+                        info!("game result: {:?}", results);
+                        gs.game_result = Some(results);
                     }
 
                     broadcast_room_game_state(&io, gs).await;

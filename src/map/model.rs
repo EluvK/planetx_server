@@ -175,7 +175,7 @@ pub struct SecretToken {
     pub user_id: String,
     pub user_index: usize,          // game sequence 1, 2, 3, 4
     pub sector_index: usize,        // 0 for init, 1-12/1-18 is set.
-    pub meeting_index: usize,       // 0 for known, 1,2, 3 is just published, // -1 for wrong guess
+    pub meeting_index: usize,       // 0 for known, 1,2, 3 is just published, // 4 for wrong guess
     pub r#type: Option<SectorType>, // 0/-1 is Some, 123 is None
 }
 
@@ -200,6 +200,13 @@ impl Token {
             },
             r#type,
         }
+    }
+
+    pub fn is_success_located(&self, r#type: SectorType) -> bool {
+        self.r#type == r#type && self.is_success_located_any()
+    }
+    pub fn is_success_located_any(&self) -> bool {
+        self.placed && self.secret.meeting_index != 4 && self.secret.r#type.is_some()
     }
 
     pub fn is_not_used(&self, r#type: &SectorType) -> bool {
