@@ -1,8 +1,9 @@
 use std::{collections::HashMap, vec};
 
 use crate::{
-    map::{MapType, SectorType},
+    map::{ChoiceFilter, MapType, SectorType},
     operation::{Operation, OperationResult},
+    recommendation::RecommendOperation,
     room::{
         GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, ServerResp,
         UserLocationSequence, UserResultSummary, UserState,
@@ -46,6 +47,16 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
         state.0.lock().await.users.remove(socket.id.as_str());
         info!(ns = "socket.io", ?socket.id, "disconnected");
     });
+
+    socket.on(
+        "recommend",
+        |io: SocketIo,
+         socket: SocketRef,
+         State::<StateRef>(state),
+         Data::<RecommendOperation>(op)| async move {
+            handle_recommend(io, socket, state, op).await;
+        },
+    );
 
     socket.on(
         "op",
@@ -117,6 +128,32 @@ pub async fn handle_on_connect(_io: SocketIo, socket: SocketRef, _state: State<S
             }
         },
     );
+}
+
+async fn handle_recommend(
+    io: SocketIo,
+    socket: SocketRef,
+    state: StateRef,
+    op: RecommendOperation,
+) {
+    let user = state.lock().await.check_auth(socket.id.as_str()).cloned();
+    let Some(user) = user else {
+        info!(ns = "socket.io", ?socket.id, "unauthorized recommend op {:?}", op);
+        return;
+    };
+
+    info!(?op, ?socket.id, "received recommend op {:?}", op);
+
+    match state.lock().await.handle_recommend_op(user, op) {
+        Ok(resp) => {
+            info!(ns = "socket.io", ?socket.id, ?resp, "recommend success");
+            socket.emit("recommend_result", &resp).ok();
+        }
+        Err(e) => {
+            info!(ns = "socket.io", ?socket.id, ?e, "recommend error");
+            socket.emit("server_resp", &ServerResp::OpErrors(e)).ok();
+        }
+    }
 }
 
 async fn handle_op(_io: SocketIo, socket: SocketRef, state: StateRef, op: Operation) {
@@ -212,6 +249,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     gs.end_index = gs.map_type.sector_count() / 2;
                     gs.users.shuffle(&mut SmallRng::seed_from_u64(gs.map_seed));
                     let mut user_tokens = HashMap::new();
+                    let mut choices = HashMap::new();
                     for (index, user) in gs.users.iter_mut().enumerate() {
                         user.location = UserLocationSequence::new(
                             gs.start_index,
@@ -220,6 +258,10 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         );
                         let tokens = gs.map_type.generate_tokens(user.id.clone(), index + 1);
                         user_tokens.insert(user.id.clone(), tokens);
+                        choices.insert(
+                            user.id.clone(),
+                            ChoiceFilter::new(gs.map_type.clone(), user.id.clone()),
+                        );
                     }
 
                     gs.hint = Some("Game is starting".to_string());
@@ -251,6 +293,7 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                         user_tokens,
                         terminator_location: None,
                         revealed_sector_indexs: vec![],
+                        choices,
                     };
                     io.of("/xplanet")
                         .unwrap()
@@ -506,6 +549,19 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                     }
                     broadcast_room_game_state(&io, gs).await;
                     broadcast_room_board_token(&io, &gs.id, ss).await;
+
+                    // update tokens to choices
+                    for (user_id, tokens) in ss.user_tokens.iter_mut() {
+                        let Some(choice) = ss.choices.get_mut(user_id) else {
+                            continue;
+                        };
+                        let placed = tokens
+                            .iter()
+                            .filter(|t| t.placed && t.secret.r#type.is_some())
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        choice.update_tokens(&placed);
+                    }
                 }
 
                 // each users should publish tokens

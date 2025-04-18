@@ -9,6 +9,7 @@ use tracing::info;
 use crate::{
     map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
+    recommendation::RecommendOperation,
     room::{
         GameStage, GameState, GameStateResp, OpError, RoomError, RoomUserOperation,
         ServerGameState, ServerResp, UserState,
@@ -281,6 +282,10 @@ impl State {
             }
         };
 
+        ss.choices
+            .get_mut(&user.id)
+            .ok_or(OpError::UserNotFoundInRoom)?
+            .add_operation(operation.clone(), op_result.clone());
         let user_state = gs
             .users
             .iter_mut()
@@ -419,6 +424,15 @@ impl State {
                 Ok(vec![gs.clone()])
             }
         }
+    }
+
+    pub fn handle_recommend_op(
+        &mut self,
+        user: User,
+        op: RecommendOperation,
+    ) -> Result<OperationResult, OpError> {
+        // todo result and error type.
+        todo!()
     }
 }
 
