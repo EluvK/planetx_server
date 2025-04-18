@@ -80,6 +80,22 @@ impl Sectors {
             .max() // 找到最大距离
             .unwrap_or(0) // 如果没有匹配项，返回 0
     }
+
+    // survey the sectors in range [st, ed], and count the number of sectors with type object.
+    pub fn get_range_type_cnt(&self, st: usize, ed: usize, object: &SectorType) -> usize {
+        self.data
+            .iter()
+            .filter(|s| {
+                in_range(st, ed, s.index, self.data.len())
+                    && match object {
+                        SectorType::Space => {
+                            s.r#type == SectorType::Space || s.r#type == SectorType::X
+                        }
+                        _ => s.r#type == *object,
+                    }
+            })
+            .count()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -284,19 +300,7 @@ impl Map {
     }
 
     pub fn survey_sector(&self, st: usize, ed: usize, object: &SectorType) -> usize {
-        self.sectors
-            .data
-            .iter()
-            .filter(|s| {
-                in_range(st, ed, s.index, self.size())
-                    && match object {
-                        SectorType::Space => {
-                            s.r#type == SectorType::Space || s.r#type == SectorType::X
-                        }
-                        _ => s.r#type == *object,
-                    }
-            })
-            .count()
+        self.sectors.get_range_type_cnt(st, ed, object)
     }
 
     pub fn target_sector(&self, index: usize) -> SectorType {

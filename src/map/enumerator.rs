@@ -1,21 +1,21 @@
 use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
 
-use super::{MapType, Sector, SectorType};
+use super::{MapType, Sector, SectorType, Sectors};
 
 type Position = usize;
 
 const PRIMES_EXPERT: [Position; 7] = [1, 2, 4, 6, 10, 12, 16]; // 0-based positions for 2,3,5,7,11,13,17
 const PRIMES_STANDARD: [Position; 5] = [1, 2, 4, 6, 10]; // 0-based positions for 2,3,5,7,11
 
-struct MapEnumerator {
+pub struct MapEnumerator {
     predef_d_e_standard: HashMap<Vec<Position>, Vec<([Position; 2], Vec<Position>)>>,
     predef_d_e_expert: HashMap<Vec<Position>, Vec<([Position; 2], Vec<Position>)>>,
 }
 
 // a: Comet, b: Asteroid, c: DwarfPlanet, d: Nebula, e: Space, f: X
 impl MapEnumerator {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let predef_d_e_standard = pre_generate_d_e_standard().collect::<HashMap<_, _>>();
         let predef_d_e_expert = pre_generate_d_e_expert().collect::<HashMap<_, _>>();
         Self {
@@ -24,7 +24,7 @@ impl MapEnumerator {
         }
     }
 
-    fn gen_sec(&self, map_type: &MapType) -> impl Iterator<Item = Vec<Sector>> {
+    pub fn gen_sec(&self, map_type: &MapType) -> impl Iterator<Item = Sectors> {
         generate_c(map_type).flat_map(move |c| {
             generate_f(&c, map_type).flat_map(move |f| {
                 generate_a(&c, f, map_type).flat_map({
@@ -247,7 +247,7 @@ fn build_sectors(
     b: &[Position],
     d: &[Position; 2],
     e: &[Position],
-) -> Vec<Sector> {
+) -> Sectors {
     let mut res = Vec::new();
     for a in a {
         res.push(Sector {
@@ -284,7 +284,7 @@ fn build_sectors(
         r#type: SectorType::X,
     });
     res.sort_by(|a, b| a.index.cmp(&b.index));
-    res
+    Sectors { data: res }
 }
 
 #[cfg(test)]
@@ -300,6 +300,12 @@ mod tests {
         let elapsed = st.elapsed();
         println!("count: {}", r1);
         println!("Elapsed time: {:?}", elapsed);
+
+        // let all = g.gen_sec(&MapType::Expert).collect::<Vec<_>>();
+        // let mem = std::mem::size_of::<Vec<Sector>>() * all.len()
+        //     + std::mem::size_of::<Sector>() * all.iter().map(|v| v.data.len()).sum::<usize>();
+        // println!("Memory usage: {} bytes", mem);
+        // println!("Memory usage: {} MB", mem as f64 / (1024.0 * 1024.0));
 
         let st = std::time::Instant::now();
         let r2 = g.gen_sec(&MapType::Standard).count();

@@ -515,7 +515,7 @@ mod tests {
                 // for sector in &map.sectors.data {
                 // println!("{}", sector);
                 // }
-                if let Ok((clues, xclues)) = cg.generate_clues() {
+                if let Ok((clues, _xclues)) = cg.generate_clues() {
                     // println!("clues: {}", clues.len());
                     for clue in clues.iter() {
                         let index = match clue.conn {
