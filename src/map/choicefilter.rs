@@ -1,3 +1,5 @@
+use tracing::info;
+
 use crate::operation::{
     LocateOperation, Operation, OperationResult, SurveyOperatoin, TargetOperation,
 };
@@ -5,11 +7,14 @@ use crate::operation::{
 use super::{ClueConnection, MapType, SectorType, Sectors, Token, enumerator::MapEnumerator};
 
 static MAX_CACHED_COUNT: usize = 100000;
+
+#[derive(Debug, Clone)]
 pub struct ChoiceFilter {
     map_type: MapType,
     id: String,
     all: Vec<Sectors>,
     ops: Vec<(Operation, OperationResult)>,
+    tokens: Vec<Token>,
     initialized: bool,
 }
 
@@ -20,6 +25,7 @@ impl ChoiceFilter {
             id,
             all: vec![],
             ops: vec![],
+            tokens: vec![],
             initialized: false,
         }
     }
@@ -28,20 +34,15 @@ impl ChoiceFilter {
         self.all.len()
     }
 
-    pub fn add_tokens(&mut self, token: &[Token]) {
-        token
-            .iter()
-            .filter(|t| t.placed && t.secret.r#type.is_some())
-            .for_each(|t| {
-                assert!(t.secret.sector_index > 0);
-                if t.secret.meeting_index == 4 {
-                    self.all
-                        .retain(|s| s.data[t.secret.sector_index - 1].r#type != t.r#type);
-                } else {
-                    self.all
-                        .retain(|s| s.data[t.secret.sector_index - 1].r#type == t.r#type);
-                }
-            });
+    pub fn update_tokens(&mut self, token: &[Token]) {
+        // not initialized
+        if !self.initialized {
+            // cached tokens if not enough operations to start filtering
+            self.tokens = token.to_vec();
+            return;
+        }
+        self.all
+            .retain(|ss| token.iter().all(|t| Self::filter_token(ss, t)));
     }
 
     pub fn add_operation(&mut self, op: Operation, result: OperationResult) {
@@ -62,6 +63,7 @@ impl ChoiceFilter {
                     self.ops
                         .iter()
                         .all(|(op, opr)| Self::filter_op(ss, op, opr))
+                        && self.tokens.iter().all(|t| Self::filter_token(ss, t))
                 })
             };
             let cnt = iter().count();
@@ -72,6 +74,21 @@ impl ChoiceFilter {
         } else {
             self.all.retain(|ss| Self::filter_op(ss, &op, &result));
             self.ops.push((op, result));
+        }
+        info!("{}: possibilities: {}", self.id, self.all.len());
+    }
+
+    fn filter_token(ss: &Sectors, token: &Token) -> bool {
+        if !token.placed {
+            return true;
+        }
+        if token.secret.r#type.is_none() {
+            return true;
+        }
+        if token.secret.meeting_index == 4 {
+            ss.data[token.secret.sector_index - 1].r#type != token.r#type
+        } else {
+            ss.data[token.secret.sector_index - 1].r#type == token.r#type
         }
     }
 
@@ -366,7 +383,7 @@ mod tests {
         // println!("{:?}", cf.possibilities());
 
         // 11 comet 12 x 13 asteroid
-        cf.add_tokens(&[
+        cf.update_tokens(&[
             Token {
                 placed: true,
                 secret: SecretToken {

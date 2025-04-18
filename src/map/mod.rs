@@ -7,3 +7,4 @@ mod model;
 
 pub use clue::*;
 pub use model::*;
+pub use choicefilter::*;

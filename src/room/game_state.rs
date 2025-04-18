@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    map::{Clue, ClueSecret, Map, MapType, SecretToken, SectorType, Token},
+    map::{ChoiceFilter, Clue, ClueSecret, Map, MapType, SecretToken, SectorType, Token},
     operation::{Operation, OperationResult},
     room::OpError,
     server_state::User,
@@ -219,6 +219,7 @@ pub struct ServerGameState {
     pub user_tokens: HashMap<String, Vec<Token>>,
     pub terminator_location: Option<UserLocationSequence>,
     pub revealed_sector_indexs: Vec<usize>,
+    pub choices: HashMap<String, ChoiceFilter>,
 }
 
 impl ServerGameState {
@@ -230,6 +231,7 @@ impl ServerGameState {
             user_tokens: HashMap::new(),
             terminator_location: None,
             revealed_sector_indexs: vec![],
+            choices: HashMap::new(),
         }
     }
 

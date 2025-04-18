@@ -1,5 +1,6 @@
 mod map;
 mod operation;
+mod recommendation;
 mod room;
 mod server_handler;
 mod server_state;
