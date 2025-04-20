@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use tracing::info;
 
 use crate::operation::{
@@ -12,10 +13,10 @@ static MAX_CACHED_COUNT: usize = 100000;
 pub struct ChoiceFilter {
     map_type: MapType,
     id: String,
-    all: Vec<Sectors>,
+    pub all: Vec<Sectors>,
     ops: Vec<(Operation, OperationResult)>,
     tokens: Vec<Token>,
-    initialized: bool,
+    pub initialized: bool,
 }
 
 impl ChoiceFilter {
@@ -164,6 +165,33 @@ impl ChoiceFilter {
             (Operation::DoPublish(_), OperationResult::DoPublish(_)) => true,
             _ => true,
         }
+    }
+
+    pub fn can_locate(&self) -> bool {
+        // can locate if all the possibilities of x are in the same sector and the adjacent sectors is only one type
+        self.initialized
+            && self
+                .all
+                .iter()
+                .map(|s| {
+                    // first find only x sectors
+                    let x_index = s
+                        .data
+                        .iter()
+                        .filter(|x| x.r#type == SectorType::X)
+                        .map(|x| x.index)
+                        .next()
+                        .unwrap();
+                    // then find the adjacent sectors
+                    let mut adjacent = vec![];
+                    for i in 1..=s.data.len() {
+                        if s.prev(i).r#type == SectorType::X || s.next(i).r#type == SectorType::X {
+                            adjacent.push(s.data[i].r#type.clone());
+                        }
+                    }
+                    (adjacent, x_index)
+                })
+                .all_equal()
     }
 }
 
@@ -395,18 +423,19 @@ mod tests {
                 },
                 r#type: SectorType::Nebula,
             },
-            Token {
-                placed: true,
-                secret: SecretToken {
-                    user_id: "xxx".to_owned(),
-                    user_index: 1,
-                    sector_index: 2,
-                    meeting_index: 4,
-                    r#type: Some(SectorType::DwarfPlanet),
-                },
-                r#type: SectorType::DwarfPlanet,
-            },
+            // Token {
+            //     placed: true,
+            //     secret: SecretToken {
+            //         user_id: "xxx".to_owned(),
+            //         user_index: 1,
+            //         sector_index: 2,
+            //         meeting_index: 4,
+            //         r#type: Some(SectorType::DwarfPlanet),
+            //     },
+            //     r#type: SectorType::DwarfPlanet,
+            // },
         ]);
+        println!("can locate: {}", cf.can_locate());
         for s in cf.all.iter() {
             println!(
                 "{:?}",

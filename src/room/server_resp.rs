@@ -7,6 +7,7 @@ pub enum ServerResp {
     RejoinRoom(String),
     RoomErrors(RoomError),
     OpErrors(OpError),
+    RecommendErrors(RecommendError),
 }
 
 impl ServerResp {
@@ -47,6 +48,15 @@ pub enum OpError {
     ResearchContiuously,
 
     EndGameCanNotLocate,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecommendError {
+    UserNotFoundInRoom,
+    GameNotFound,
+
+    NotEnoughData,
 }
 
 #[cfg(test)]

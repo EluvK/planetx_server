@@ -151,7 +151,9 @@ async fn handle_recommend(
         }
         Err(e) => {
             info!(ns = "socket.io", ?socket.id, ?e, "recommend error");
-            socket.emit("server_resp", &ServerResp::OpErrors(e)).ok();
+            socket
+                .emit("server_resp", &ServerResp::RecommendErrors(e))
+                .ok();
         }
     }
 }

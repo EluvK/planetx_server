@@ -9,9 +9,9 @@ use tracing::info;
 use crate::{
     map::{SectorType, validate_index_in_range},
     operation::{Operation, OperationResult},
-    recommendation::RecommendOperation,
+    recommendation::{RecommendOperation, RecommendOperationResult},
     room::{
-        GameStage, GameState, GameStateResp, OpError, RoomError, RoomUserOperation,
+        GameStage, GameState, GameStateResp, OpError, RecommendError, RoomError, RoomUserOperation,
         ServerGameState, ServerResp, UserState,
     },
 };
@@ -430,9 +430,36 @@ impl State {
         &mut self,
         user: User,
         op: RecommendOperation,
-    ) -> Result<OperationResult, OpError> {
-        // todo result and error type.
-        todo!()
+    ) -> Result<RecommendOperationResult, RecommendError> {
+        let room_id = self
+            .iter_game_state()
+            .find_map(|(id, gs)| gs.users.iter().any(|u| u.id == user.id).then_some(id))
+            .cloned()
+            .ok_or(RecommendError::UserNotFoundInRoom)?;
+        let (_gs, ss) = self
+            .get_state(&room_id)
+            .ok_or(RecommendError::GameNotFound)?;
+        let choice = ss
+            .choices
+            .get(&user.id)
+            .ok_or(RecommendError::UserNotFoundInRoom)?;
+        match op {
+            RecommendOperation::Count => {
+                if !choice.initialized {
+                    return Err(RecommendError::NotEnoughData);
+                } else {
+                    return Ok(RecommendOperationResult::Count(choice.all.len()));
+                }
+            }
+            RecommendOperation::CanLocate => {
+                if !choice.initialized {
+                    return Err(RecommendError::NotEnoughData);
+                } else {
+                    let can_locate = choice.can_locate();
+                    return Ok(RecommendOperationResult::CanLocate(can_locate));
+                }
+            }
+        }
     }
 }
 
