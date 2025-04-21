@@ -12,7 +12,7 @@ pub enum ServerResp {
 
 impl ServerResp {
     pub fn auth_success_version() -> Self {
-        Self::Version("0.0.5".to_string())
+        Self::Version("0.0.6".to_string())
     }
 
     pub fn rejoin_room(room_id: String) -> Self {
