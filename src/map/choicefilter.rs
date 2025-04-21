@@ -154,11 +154,20 @@ impl ChoiceFilter {
                     .filter(|&x| x.r#type == clue.subject)
                     .all(|x| !ss.check_range_exist(x.index, &clue.object, range)),
             },
-            (Operation::Locate(LocateOperation { index, .. }), OperationResult::Locate(r)) => {
+            (
+                Operation::Locate(LocateOperation {
+                    index,
+                    pre_sector_type,
+                    next_sector_type,
+                }),
+                OperationResult::Locate(r),
+            ) => {
                 if *r {
                     ss.data[*index - 1].r#type == SectorType::X
+                        && ss.prev(*index).r#type == *pre_sector_type
+                        && ss.next(*index).r#type == *next_sector_type
                 } else {
-                    ss.data[*index - 1].r#type != SectorType::X
+                    true
                 }
             }
             (Operation::ReadyPublish(_), OperationResult::ReadyPublish(_)) => true,
