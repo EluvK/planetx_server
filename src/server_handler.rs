@@ -2,7 +2,7 @@ use std::{collections::HashMap, vec};
 
 use crate::{
     map::{ChoiceFilter, MapType, SectorType},
-    operation::{Operation, OperationResult},
+    operation::{Operation, OperationResult, ResearchOperation},
     recommendation::RecommendOperation,
     room::{
         GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, ServerResp,
@@ -405,6 +405,15 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
                             }
                             gs.game_stage = GameStage::UserMove;
                             gs.status = GameState::AutoMove;
+
+                            for (_user_id, filter) in ss.choices.iter_mut() {
+                                filter.add_operation(
+                                    Operation::Research(ResearchOperation {
+                                        index: xclue[0].index.clone(),
+                                    }),
+                                    OperationResult::Research(xclue[0].clone()),
+                                );
+                            }
                         }
                     }
                     broadcast_room_game_state(&io, gs).await;

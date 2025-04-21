@@ -104,7 +104,13 @@ impl ChoiceFilter {
                 OperationResult::Survey(cnt),
             ) => ss.get_range_type_cnt(*start, *end, sector_type) == *cnt,
             (Operation::Target(TargetOperation { index }), OperationResult::Target(r#type)) => {
-                ss.data[*index - 1].r#type == *r#type
+                match r#type {
+                    SectorType::Space => {
+                        ss.data[*index - 1].r#type == SectorType::Space
+                            || ss.data[*index - 1].r#type == SectorType::X
+                    }
+                    _ => ss.data[*index - 1].r#type == *r#type,
+                }
             }
             (Operation::Research(_), OperationResult::Research(clue)) => match clue.conn {
                 ClueConnection::AllAdjacent => {
@@ -195,7 +201,7 @@ impl ChoiceFilter {
                     let mut adjacent = vec![];
                     for i in 1..=s.data.len() {
                         if s.prev(i).r#type == SectorType::X || s.next(i).r#type == SectorType::X {
-                            adjacent.push(s.data[i].r#type.clone());
+                            adjacent.push(s.data[i - 1].r#type.clone());
                         }
                     }
                     (adjacent, x_index)
@@ -207,7 +213,7 @@ impl ChoiceFilter {
 #[cfg(test)]
 mod tests {
     use crate::{
-        map::{Clue, SecretToken, SectorType},
+        map::{Clue, ClueEnum, SecretToken, SectorType},
         operation::ResearchOperation,
     };
 
@@ -215,235 +221,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_filter() {
+    fn test_filter2() {
         let mut cf = ChoiceFilter::new(MapType::Expert, "test".to_string());
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::DwarfPlanet,
-                start: 1,
-                end: 9,
-            }),
-            OperationResult::Survey(4),
-        );
+        macro_rules! survey {
+            ($t:expr, $start:expr, $end:expr, $cnt:expr) => {
+                cf.add_operation(
+                    Operation::Survey(SurveyOperatoin {
+                        sector_type: $t,
+                        start: $start,
+                        end: $end,
+                    }),
+                    OperationResult::Survey($cnt),
+                );
+            };
+        }
 
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Comet,
-                start: 3,
-                end: 11,
-            }),
-            OperationResult::Survey(1),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::A,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::A,
-                conn: ClueConnection::OneOpposite,
-                subject: SectorType::Comet,
-                object: SectorType::DwarfPlanet,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::X1,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::X1,
-                conn: ClueConnection::NotAdjacent,
-                subject: SectorType::X,
-                object: SectorType::Space,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::DwarfPlanet,
-                start: 6,
-                end: 14,
-            }),
-            OperationResult::Survey(1),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Asteroid,
-                start: 8,
-                end: 16,
-            }),
-            OperationResult::Survey(2),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::B,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::B,
-                conn: ClueConnection::AllInRange(5),
-                subject: SectorType::Nebula,
-                object: SectorType::Comet,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
+        survey!(SectorType::DwarfPlanet, 1, 9, 3);
+        survey!(SectorType::Comet, 3, 11, 1);
+        survey!(SectorType::DwarfPlanet, 5, 13, 4);
+        survey!(SectorType::Comet, 7, 13, 1);
+        survey!(SectorType::Asteroid, 9, 17, 1);
+        survey!(SectorType::Asteroid, 12, 2, 2);
+        survey!(SectorType::Nebula, 16, 4, 2);
+        survey!(SectorType::Comet, 17, 7, 1);
+        survey!(SectorType::Nebula, 1, 9, 1);
+        survey!(SectorType::Comet, 3, 11, 1);
+        survey!(SectorType::DwarfPlanet, 5, 11, 3);
 
         cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::DwarfPlanet,
-                start: 11,
-                end: 1,
-            }),
-            OperationResult::Survey(0),
+            Operation::Target(TargetOperation { index: 11 }),
+            OperationResult::Target(SectorType::Comet),
         );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Asteroid,
-                start: 13,
-                end: 3,
-            }),
-            OperationResult::Survey(4),
-        );
-        println!("{:?}", cf.possibilities());
 
         cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::C,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::C,
-                conn: ClueConnection::NotAdjacent,
-                subject: SectorType::DwarfPlanet,
-                object: SectorType::Nebula,
-            }),
+            Operation::Target(TargetOperation { index: 3 }),
+            OperationResult::Target(SectorType::Space),
         );
-        println!("{:?}", cf.possibilities());
 
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Nebula,
-                start: 16,
-                end: 6,
-            }),
-            OperationResult::Survey(1),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::X2,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::X2,
-                conn: ClueConnection::AllAdjacent,
-                subject: SectorType::X,
-                object: SectorType::Comet,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::D,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::D,
-                conn: ClueConnection::OneOpposite,
-                subject: SectorType::Comet,
-                object: SectorType::Space,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Comet,
-                start: 2,
-                end: 7,
-            }),
-            OperationResult::Survey(0),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Nebula,
-                start: 4,
-                end: 12,
-            }),
-            OperationResult::Survey(1),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::E,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::E,
-                conn: ClueConnection::OneAdjacent,
-                subject: SectorType::DwarfPlanet,
-                object: SectorType::Space,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Survey(SurveyOperatoin {
-                sector_type: SectorType::Nebula,
-                start: 7,
-                end: 15,
-            }),
-            OperationResult::Survey(1),
-        );
-        println!("{:?}", cf.possibilities());
-        cf.add_operation(
-            Operation::Research(ResearchOperation {
-                index: crate::map::ClueEnum::F,
-            }),
-            OperationResult::Research(Clue {
-                index: crate::map::ClueEnum::F,
-                conn: ClueConnection::NotAdjacent,
-                subject: SectorType::Nebula,
-                object: SectorType::Asteroid,
-            }),
-        );
-        println!("{:?}", cf.possibilities());
+        macro_rules! research {
+            ($i:expr,  $conn:expr, $s:expr, $o:expr) => {
+                cf.add_operation(
+                    Operation::Research(ResearchOperation { index: $i }),
+                    OperationResult::Research(Clue {
+                        index: $i,
+                        conn: $conn,
+                        subject: $s,
+                        object: $o,
+                    }),
+                );
+            };
+        }
 
-        // for s in cf.all.iter() {
-        //     println!("{:?}", s);
-        // }
+        research!(
+            ClueEnum::X1,
+            ClueConnection::AllAdjacent,
+            SectorType::X,
+            SectorType::Comet
+        );
 
-        // cf.add_operation(
-        //     Operation::Target(TargetOperation { index: 10 }),
-        //     OperationResult::Target(SectorType::Nebula),
-        // );
-        // println!("{:?}", cf.possibilities());
-
-        // 11 comet 12 x 13 asteroid
         cf.update_tokens(&[
             Token {
                 placed: true,
                 secret: SecretToken {
                     user_id: "xxx".to_owned(),
                     user_index: 1,
-                    sector_index: 10,
+                    sector_index: 17,
                     meeting_index: 3,
-                    r#type: Some(SectorType::Nebula),
+                    r#type: Some(SectorType::Asteroid),
                 },
-                r#type: SectorType::Nebula,
+                r#type: SectorType::Asteroid,
             },
-            // Token {
-            //     placed: true,
-            //     secret: SecretToken {
-            //         user_id: "xxx".to_owned(),
-            //         user_index: 1,
-            //         sector_index: 2,
-            //         meeting_index: 4,
-            //         r#type: Some(SectorType::DwarfPlanet),
-            //     },
-            //     r#type: SectorType::DwarfPlanet,
-            // },
+            Token {
+                placed: true,
+                secret: SecretToken {
+                    user_id: "xxx".to_owned(),
+                    user_index: 1,
+                    sector_index: 11,
+                    meeting_index: 4,
+                    r#type: Some(SectorType::DwarfPlanet),
+                },
+                r#type: SectorType::DwarfPlanet,
+            },
         ]);
+
+        println!("{:?}", cf.possibilities());
         println!("can locate: {}", cf.can_locate());
         for s in cf.all.iter() {
             println!(
