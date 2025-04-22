@@ -27,6 +27,8 @@ enum InnerRoomOp<'a> {
     Enter(&'a String),
     Leave(&'a String),
     LeaveAll,
+    EnableBot(&'a String),
+    DisableBot(&'a String),
 }
 impl State {
     fn new() -> Self {
@@ -310,7 +312,7 @@ impl State {
             InnerRoomOp::Enter(id) => {
                 if let Some(gs) = self.get_game_state(id) {
                     if !gs.users.iter().any(|u| u.id == user.id) && gs.users.len() < 4 {
-                        let room_user = UserState::placeholder(&user, gs.users.len() + 1);
+                        let room_user = UserState::placeholder(&user, gs.users.len() + 1, false);
                         gs.users.push(room_user);
                         res.push(gs.clone());
                     } else {
@@ -338,6 +340,34 @@ impl State {
                     }
                 }
             }
+            InnerRoomOp::EnableBot(id) => {
+                if let Some(gs) = self.get_game_state(id) {
+                    if !gs.users.iter().any(|u| u.is_bot) && gs.users.len() < 4 {
+                        let bot_user = User {
+                            id: "bot".to_string(),
+                            name: "protocol".to_string(),
+                        };
+                        let room_bot_user =
+                            UserState::placeholder(&bot_user, gs.users.len() + 1, true);
+                        gs.users.push(room_bot_user);
+                        res.push(gs.clone());
+                    } else {
+                        info!("room full or bot already in room");
+                    }
+                } else {
+                    info!("room not found");
+                }
+            }
+            InnerRoomOp::DisableBot(id) => {
+                if let Some(gs) = self.get_game_state(id) {
+                    if gs.users.iter().any(|u| u.is_bot) {
+                        gs.users.retain(|u| !u.is_bot);
+                        res.push(gs.clone());
+                    }
+                } else {
+                    info!("room not found");
+                }
+            }
         }
         res
     }
@@ -353,9 +383,14 @@ impl State {
                 let mut results = self._room_op(user.clone(), InnerRoomOp::LeaveAll);
                 socket.leave_all();
                 let rand_new_id = loop {
-                    let rand_id: String =
-                        uuid::Uuid::new_v4().to_string().chars().take(4).collect();
-                    if !self.iter_game_state().any(|(id, _)| id == &rand_id) {
+                    // maybe a pure number id is better
+                    let rand_id: String = uuid::Uuid::new_v4()
+                        .to_string()
+                        .chars()
+                        .filter(|c| c.is_ascii_digit())
+                        .take(4)
+                        .collect();
+                    if rand_id.len() == 4 && !self.iter_game_state().any(|(id, _)| id == &rand_id) {
                         break rand_id;
                     }
                 };
@@ -371,6 +406,21 @@ impl State {
                 results.extend(self._room_op(user, InnerRoomOp::Enter(&rand_new_id)));
                 socket.join(rand_new_id);
                 Ok(results)
+            }
+            RoomUserOperation::SwitchBot(id) => {
+                let gs = self.get_game_state(&id).ok_or(RoomError::RoomNotFound)?;
+                if gs.status != GameState::NotStarted {
+                    return Err(RoomError::RoomStarted);
+                }
+                let res = if gs.users.iter().any(|u| u.is_bot) {
+                    self._room_op(user, InnerRoomOp::DisableBot(&id))
+                } else {
+                    if gs.users.len() >= 4 {
+                        return Err(RoomError::RoomFull);
+                    }
+                    self._room_op(user, InnerRoomOp::EnableBot(&id))
+                };
+                Ok(res)
             }
             RoomUserOperation::Edit(new_info) => {
                 let gs = self

@@ -16,6 +16,7 @@ pub enum RoomUserOperation {
     Leave(String),
     Prepare(String),
     Unprepare(String),
+    SwitchBot(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

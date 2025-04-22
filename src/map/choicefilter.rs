@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use itertools::Itertools;
 use tracing::info;
 
@@ -31,8 +33,12 @@ impl ChoiceFilter {
         }
     }
 
-    pub fn possibilities(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.all.len()
+    }
+
+    pub fn all_possibilities(&self) -> AllSectorPossibilities {
+        AllSectorPossibilities::from(self.all.clone())
     }
 
     pub fn update_tokens(&mut self, token: &[Token]) {
@@ -76,7 +82,7 @@ impl ChoiceFilter {
             self.all.retain(|ss| Self::filter_op(ss, &op, &result));
             self.ops.push((op, result));
         }
-        info!("{}: possibilities: {}", self.id, self.all.len());
+        info!("{}: choices: {}", self.id, self.all.len());
     }
 
     fn filter_token(ss: &Sectors, token: &Token) -> bool {
@@ -210,6 +216,54 @@ impl ChoiceFilter {
     }
 }
 
+#[derive(Debug)]
+pub struct SectorPossibility {
+    pub sector_type: SectorType,
+    pub rate: f32,
+}
+
+#[derive(Debug)]
+pub struct SectorPossibilities {
+    pub index: usize, // 1-based index
+    pub possibilities: Vec<SectorPossibility>,
+}
+
+#[derive(Debug)]
+pub struct AllSectorPossibilities(Vec<SectorPossibilities>);
+
+impl From<Vec<Sectors>> for AllSectorPossibilities {
+    fn from(value: Vec<Sectors>) -> Self {
+        if value.is_empty() {
+            return Self(vec![]);
+        }
+        let sector_cnt = value[0].data.len();
+        let mut res = vec![];
+
+        for i in 1..=sector_cnt {
+            let mut rates = HashMap::new();
+            value.iter().for_each(|s| {
+                let sector = s.data[i - 1].r#type.clone();
+                *rates.entry(sector.clone()).or_insert(0) += 1;
+            });
+            let mut possibilities = rates
+                .iter()
+                .map(|(k, v)| SectorPossibility {
+                    sector_type: k.clone(),
+                    rate: *v as f32 / value.len() as f32,
+                })
+                .collect::<Vec<SectorPossibility>>();
+            possibilities.sort_by(|a, b| b.rate.partial_cmp(&a.rate).unwrap());
+
+            res.push(SectorPossibilities {
+                index: i,
+                possibilities,
+            });
+        }
+
+        Self(res)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -304,13 +358,25 @@ mod tests {
             },
         ]);
 
-        println!("{:?}", cf.possibilities());
+        println!("{:?}", cf.len());
         println!("can locate: {}", cf.can_locate());
-        for s in cf.all.iter() {
+        let all_possibilities = cf.all_possibilities();
+        for s in all_possibilities.0.iter() {
             println!(
                 "{:?}",
-                s.data.iter().map(|x| x.r#type.clone()).collect::<Vec<_>>()
+                s.possibilities
+                    .iter()
+                    .map(|p| format!("{} {:.3}", p.sector_type, p.rate))
+                    .collect::<Vec<_>>()
             );
         }
+
+        println!("res len: {}", cf.all.len());
+        // for s in cf.all.iter() {
+        //     println!(
+        //         "{:?}",
+        //         s.data.iter().map(|x| x.r#type.clone()).collect::<Vec<_>>()
+        //     );
+        // }
     }
 }

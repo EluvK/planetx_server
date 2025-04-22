@@ -124,20 +124,22 @@ pub struct UserState {
     #[serde(skip)]
     pub moves_result: Vec<OperationResult>,
     pub used_token: Vec<SecretToken>,
+    pub is_bot: bool,
 }
 
 impl UserState {
-    pub fn placeholder(user: &User, child_index: usize) -> Self {
+    pub fn placeholder(user: &User, child_index: usize, is_bot: bool) -> Self {
         UserState {
             id: user.id.clone(),
             name: user.name.clone(),
-            ready: false,
+            ready: is_bot,
             location: UserLocationSequence::placeholder(1, child_index),
             last_move: true,
             can_locate: true,
             moves: vec![],
             moves_result: vec![],
             used_token: vec![],
+            is_bot,
         }
     }
 }
