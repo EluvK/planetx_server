@@ -1,3 +1,6 @@
+mod best_move;
+pub use best_move::*;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -344,7 +344,7 @@ impl State {
                 if let Some(gs) = self.get_game_state(id) {
                     if !gs.users.iter().any(|u| u.is_bot) && gs.users.len() < 4 {
                         let bot_user = User {
-                            id: "bot".to_string(),
+                            id: format!("bot-{}", &id),
                             name: "protocol".to_string(),
                         };
                         let room_bot_user =

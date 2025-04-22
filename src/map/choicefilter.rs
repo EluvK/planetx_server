@@ -4,10 +4,11 @@ use itertools::Itertools;
 use tracing::info;
 
 use crate::operation::{
-    LocateOperation, Operation, OperationResult, SurveyOperatoin, TargetOperation,
+    LocateOperation, Operation, OperationResult, ResearchOperation, SurveyOperatoin,
+    TargetOperation,
 };
 
-use super::{ClueConnection, MapType, SectorType, Sectors, Token, enumerator::MapEnumerator};
+use super::{Clue, ClueConnection, MapType, SectorType, Sectors, Token, enumerator::MapEnumerator};
 
 static MAX_CACHED_COUNT: usize = 100000;
 
@@ -214,12 +215,98 @@ impl ChoiceFilter {
                 })
                 .all_equal()
     }
+
+    // try to locate the x sector
+    pub fn try_locate(&self) -> Option<LocateOperation> {
+        let all_possibilities = self.all_possibilities();
+        let mut x_index = 0;
+        let mut max_rate = 0.0;
+        for s in all_possibilities.0.iter() {
+            for p in s.possibilities.iter() {
+                if p.sector_type == SectorType::X && p.rate > max_rate {
+                    max_rate = p.rate;
+                    x_index = s.index;
+                }
+            }
+        }
+        let pre_index = if x_index == 1 {
+            all_possibilities.0.len()
+        } else {
+            x_index - 1
+        };
+        let next_index = if x_index == all_possibilities.0.len() {
+            1
+        } else {
+            x_index + 1
+        };
+        let pre_sector_type = all_possibilities.0[pre_index - 1]
+            .possibilities
+            .iter()
+            .filter(|x| x.sector_type != SectorType::X)
+            .next();
+        let next_sector_type = all_possibilities.0[next_index - 1]
+            .possibilities
+            .iter()
+            .filter(|x| x.sector_type != SectorType::X)
+            .next();
+        if let (Some(pre), Some(next)) = (pre_sector_type, next_sector_type) {
+            Some(LocateOperation {
+                index: x_index,
+                pre_sector_type: pre.sector_type.clone(),
+                next_sector_type: next.sector_type.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn effect_survey(&self, survey: &SurveyOperatoin) -> f64 {
+        // if not initialized, return 0
+        if !self.initialized {
+            return 0.0;
+        }
+        // get all possible result of the survey, that is the number of surver.type between start and end
+        // for example, current 1000 possibilities, 200 of them are count = 2, 300 of them are count = 3, 500 of them are count = 1.
+        // the effect of the survey is 0.2 * 0.2 + 0.3 * 0.3 + 0.5 * 0.5 = 0.38
+        let mut cnt = HashMap::new();
+        for s in self.all.iter() {
+            let count = s.get_range_type_cnt(survey.start, survey.end, &survey.sector_type);
+            *cnt.entry(count).or_insert(0) += 1;
+        }
+        let total = self.all.len() as f64;
+        let mut res = 0.0;
+        for (_count, v) in cnt.iter() {
+            let rate = *v as f64 / total;
+            res += rate * rate;
+        }
+        res
+    }
+
+    pub fn effect_research(&self, clue: &Clue) -> f64 {
+        if !self.initialized {
+            return 0.0;
+        }
+
+        // try apply the clue
+        let op = Operation::Research(ResearchOperation {
+            index: clue.index.clone(),
+        });
+        let opr = OperationResult::Research(clue.clone());
+
+        // filter the possibilities
+        let cnt = self
+            .all
+            .iter()
+            .filter(|ss| Self::filter_op(ss, &op, &opr))
+            .count();
+        cnt as f64 / self.all.len() as f64
+    }
 }
 
 #[derive(Debug)]
 pub struct SectorPossibility {
     pub sector_type: SectorType,
-    pub rate: f32,
+    pub rate: f64,
 }
 
 #[derive(Debug)]
@@ -249,7 +336,7 @@ impl From<Vec<Sectors>> for AllSectorPossibilities {
                 .iter()
                 .map(|(k, v)| SectorPossibility {
                     sector_type: k.clone(),
-                    rate: *v as f32 / value.len() as f32,
+                    rate: *v as f64 / value.len() as f64,
                 })
                 .collect::<Vec<SectorPossibility>>();
             possibilities.sort_by(|a, b| b.rate.partial_cmp(&a.rate).unwrap());
@@ -294,6 +381,12 @@ mod tests {
         survey!(SectorType::Comet, 3, 11, 1);
         survey!(SectorType::DwarfPlanet, 5, 13, 4);
         survey!(SectorType::Comet, 7, 13, 1);
+        let r = cf.effect_survey(&SurveyOperatoin {
+            sector_type: SectorType::Asteroid,
+            start: 9,
+            end: 17,
+        });
+        println!("effect: {}", r);
         survey!(SectorType::Asteroid, 9, 17, 1);
         survey!(SectorType::Asteroid, 12, 2, 2);
         survey!(SectorType::Nebula, 16, 4, 2);
@@ -370,6 +463,7 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+        println!("try locate: {:?}", cf.try_locate());
 
         println!("res len: {}", cf.all.len());
         // for s in cf.all.iter() {
