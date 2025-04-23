@@ -1,6 +1,8 @@
 use crate::{
-    map::{ChoiceFilter, Clue, ClueConnection, ClueEnum, SectorType, Token},
-    operation::{Operation, ReadyPublishOperation, ResearchOperation, SurveyOperatoin},
+    map::{ChoiceFilter, Clue, ClueConnection, ClueEnum, MapType, SectorType, Token},
+    operation::{
+        DoPublishOperation, Operation, ReadyPublishOperation, ResearchOperation, SurveyOperatoin,
+    },
     room::{GameStage, UserState},
 };
 use itertools::Itertools;
@@ -44,24 +46,38 @@ impl SectorIndex {
         }
         Self::new(self.value - 1, self.max)
     }
+    pub fn dis(&self, other: &Self) -> usize {
+        let dis = if self.value > other.value {
+            self.value - other.value + 1
+        } else {
+            other.value - self.value + 1
+        };
+        if dis > self.max / 2 {
+            self.max - dis + 2
+        } else {
+            dis
+        }
+    }
+}
+
+pub struct BestMoveInfo {
+    pub stage: GameStage,
+    pub map_type: MapType,
+    pub start_index: SectorIndex,
+    pub end_index: SectorIndex,
+    pub revealed_sectors: Vec<usize>,
 }
 
 pub fn best_move(
-    stage: GameStage,
-    start_index: SectorIndex,
-    end_index: SectorIndex,
+    info: BestMoveInfo,
     clues: Vec<Clue>, // should not used the conn field
     user_state: &UserState,
     tokens: &[Token],
     choice_filter: &ChoiceFilter,
 ) -> Operation {
     let mut candidate_operations = vec![];
-    if choice_filter.can_locate() {
-        if let Some(op) = choice_filter.try_locate() {
-            return Operation::Locate(op);
-        }
-    }
-    match stage {
+
+    match &info.stage {
         GameStage::UserMove => {
             candidate_operations.push(CandidateOperation::Survey);
 
@@ -85,18 +101,17 @@ pub fn best_move(
             candidate_operations.push(CandidateOperation::DoPublish);
         }
     }
+    if choice_filter.can_locate()
+        && (info.stage == GameStage::UserMove || info.stage == GameStage::LastMove)
+    {
+        if let Some(op) = choice_filter.try_locate() {
+            return Operation::Locate(op);
+        }
+    }
     let mut moves: Vec<_> = candidate_operations
         .into_iter()
         .map(|c_op| {
-            map_candidate_operations(
-                c_op,
-                start_index.clone(),
-                end_index.clone(),
-                &clues,
-                user_state,
-                tokens,
-                choice_filter,
-            )
+            map_candidate_operations(c_op, &info, &clues, user_state, tokens, choice_filter)
         })
         .flatten()
         .collect();
@@ -107,8 +122,9 @@ pub fn best_move(
         return Operation::Research(ResearchOperation { index: ClueEnum::A });
     }
     for m in &moves {
-        info!("Possible move: {:?} {} {}", m.op, m.score, m.filter_effect);
+        info!("- {:?} {} {}|c{}", m.op, m.score, m.filter_effect, m.cost);
     }
+    info!("Best move: {:?}", moves[0].op);
     return moves[0].op.clone();
 }
 
@@ -140,19 +156,20 @@ struct PossibleMove {
     op: Operation,
     score: f64,
     filter_effect: f64,
+    cost: usize,
 }
 
 impl PossibleMove {
     fn weight(&self) -> f64 {
-        // todo
-        return self.score + self.filter_effect * 10.0;
+        // [0-20]
+        let effect = self.score + self.filter_effect * 10.0;
+        effect + 1.0 / self.cost as f64
     }
 }
 
 fn map_candidate_operations(
     candidate_op: CandidateOperation,
-    start_index: SectorIndex,
-    end_index: SectorIndex,
+    info: &BestMoveInfo,
     clues: &[Clue],
     user_state: &UserState,
     tokens: &[Token],
@@ -161,21 +178,29 @@ fn map_candidate_operations(
     match candidate_op {
         CandidateOperation::Survey => {
             let start = [
-                start_index.clone(),
-                start_index.next(),
-                start_index.next().next(),
+                info.start_index.clone(),
+                info.start_index.next(),
+                info.start_index.next().next(),
             ];
-            let end = [end_index.prev().prev(), end_index.prev(), end_index.clone()];
+            let end = [
+                info.end_index.clone(),
+                info.end_index.prev(),
+                info.end_index.prev().prev(),
+            ];
             let sector_type = [
-                SectorType::Asteroid,
-                SectorType::Comet,
                 SectorType::DwarfPlanet,
+                SectorType::Comet,
+                SectorType::Asteroid,
                 SectorType::Nebula,
             ];
             return start
                 .iter()
                 .cartesian_product(end.iter())
                 .cartesian_product(sector_type.iter())
+                .filter(|((start, end), sector_type)| {
+                    !matches!(sector_type, SectorType::Comet)
+                        || (is_prime(start.as_usize()) && is_prime(end.as_usize()))
+                })
                 .map(|((start, end), sector_type)| {
                     let op = SurveyOperatoin {
                         start: start.as_usize(),
@@ -187,6 +212,7 @@ fn map_candidate_operations(
                         op: Operation::Survey(op),
                         score: 0.0,
                         filter_effect,
+                        cost: 5 - (start.dis(end) + 2) / 3,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -249,20 +275,107 @@ fn map_candidate_operations(
                     op: Operation::Research(ResearchOperation {
                         index: clue.index.clone(),
                     }),
-                    score: avg_effect,
-                    filter_effect: 0.0,
+                    score: 0.0,
+                    filter_effect: avg_effect,
+                    cost: 2,
                 });
             }
             return res;
         }
         CandidateOperation::ReadyPublish => {
+            let best_shot = best_shot(info, tokens, choice_filter);
+            let number = match info.map_type {
+                MapType::Standard => 1,
+                MapType::Expert => 2,
+            };
+            let ss = best_shot
+                .into_iter()
+                .take(number)
+                .map(|(i, s, r)| {
+                    info!("ready publish best shot: {i} {s:?} {r}");
+                    s
+                })
+                .collect();
             return vec![PossibleMove {
-                op: Operation::ReadyPublish(ReadyPublishOperation { sectors: vec![] }),
+                op: Operation::ReadyPublish(ReadyPublishOperation { sectors: ss }),
                 score: 0.0,
                 filter_effect: 0.0,
+                cost: 0,
             }];
         }
-        CandidateOperation::DoPublish => {}
+        CandidateOperation::DoPublish => {
+            let best_shot = best_shot(info, tokens, choice_filter);
+            // let number = match info.map_type {
+            //     MapType::Standard => 1,
+            //     MapType::Expert => 2,
+            // };
+            let ss = best_shot
+                .into_iter()
+                .take(1)
+                .map(|(i, s, _)| (i, s))
+                .collect::<Vec<_>>();
+            if ss.is_empty() {
+                error!("No best shot available for publish, how?");
+                return vec![];
+            }
+            return vec![PossibleMove {
+                op: Operation::DoPublish(DoPublishOperation {
+                    index: ss[0].0,
+                    sector_type: ss[0].1.clone(),
+                }),
+                score: 0.0,
+                filter_effect: 0.0,
+                cost: 0,
+            }];
+        }
     }
     vec![]
+}
+
+fn best_shot(
+    info: &BestMoveInfo,
+    tokens: &[Token],
+    choice_filter: &ChoiceFilter,
+) -> Vec<(usize, SectorType, f64)> {
+    let usable_token = |t: &Token| !t.placed || t.secret.sector_index == 0;
+
+    let all_possibilities = choice_filter.all_possibilities();
+    let possible_sector_tokens = tokens
+        .iter()
+        .filter_map(|x| usable_token(x).then_some(x.r#type.clone()))
+        .unique()
+        .collect::<Vec<_>>();
+    info!("possible sector tokens: {:?}", possible_sector_tokens);
+    let guessed_sectors = tokens
+        .iter()
+        .filter_map(|x| {
+            (x.placed && (x.secret.meeting_index != 4 || x.secret.r#type.is_some()))
+                .then_some(x.secret.sector_index)
+        })
+        .unique()
+        .collect::<Vec<_>>();
+    info!("guessed sectors: {:?}", guessed_sectors);
+    let mut best_shot = all_possibilities
+        .0
+        .into_iter()
+        .filter(|sp| {
+            !info.revealed_sectors.contains(&sp.index) && !guessed_sectors.contains(&sp.index)
+        })
+        .filter_map(|sp| {
+            sp.possibilities
+                .first()
+                .map(|x| (sp.index, x.sector_type.clone(), x.rate))
+        })
+        .filter(|(_index, sector_type, _rate)| {
+            possible_sector_tokens.contains(sector_type) && *_rate > 0.90
+        })
+        .collect::<Vec<_>>();
+    best_shot.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+    best_shot
+}
+
+fn is_prime(n: usize) -> bool {
+    // actually, we only need to check if n is a prime number less than 18.
+    // so we can just hard code the prime numbers.
+    matches!(n, 2 | 3 | 5 | 7 | 11 | 13 | 17)
 }

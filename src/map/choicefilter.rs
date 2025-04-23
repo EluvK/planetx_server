@@ -11,6 +11,7 @@ use crate::operation::{
 use super::{Clue, ClueConnection, MapType, SectorType, Sectors, Token, enumerator::MapEnumerator};
 
 static MAX_CACHED_COUNT: usize = 100000;
+static MAX_CACHED_COUNT_FOR_BOT: usize = 500000;
 
 #[derive(Debug, Clone)]
 pub struct ChoiceFilter {
@@ -32,6 +33,23 @@ impl ChoiceFilter {
             tokens: vec![],
             initialized: false,
         }
+        // if !id.starts_with("bot-") {
+        // } else {
+        //     let m = MapEnumerator::new();
+        //     let all = m.gen_sec(&map_type).collect();
+        //     Self {
+        //         map_type,
+        //         id,
+        //         all,
+        //         ops: vec![],
+        //         tokens: vec![],
+        //         initialized: true,
+        //     }
+        // }
+    }
+
+    fn is_bot(&self) -> bool {
+        self.id.starts_with("bot-")
     }
 
     pub fn len(&self) -> usize {
@@ -57,7 +75,7 @@ impl ChoiceFilter {
         // not initialized
         if !self.initialized {
             self.ops.push((op, result));
-            if matches!(self.map_type, MapType::Expert) && self.ops.len() < 3 {
+            if matches!(self.map_type, MapType::Expert) && self.ops.len() < 3 && !self.is_bot() {
                 // expert map, no need to filter
                 return;
             }
@@ -75,7 +93,13 @@ impl ChoiceFilter {
                 })
             };
             let cnt = iter().count();
-            if cnt <= MAX_CACHED_COUNT {
+            if cnt
+                <= if self.is_bot() {
+                    MAX_CACHED_COUNT_FOR_BOT
+                } else {
+                    MAX_CACHED_COUNT
+                }
+            {
                 self.all = iter().collect();
                 self.initialized = true;
             }
@@ -279,7 +303,7 @@ impl ChoiceFilter {
             let rate = *v as f64 / total;
             res += rate * rate;
         }
-        res
+        1.0 - res
     }
 
     pub fn effect_research(&self, clue: &Clue) -> f64 {
@@ -316,7 +340,7 @@ pub struct SectorPossibilities {
 }
 
 #[derive(Debug)]
-pub struct AllSectorPossibilities(Vec<SectorPossibilities>);
+pub struct AllSectorPossibilities(pub Vec<SectorPossibilities>);
 
 impl From<Vec<Sectors>> for AllSectorPossibilities {
     fn from(value: Vec<Sectors>) -> Self {

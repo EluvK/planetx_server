@@ -3,7 +3,7 @@ use std::{collections::HashMap, vec};
 use crate::{
     map::{ChoiceFilter, MapType, SectorType},
     operation::{Operation, OperationResult, ResearchOperation},
-    recommendation::{RecommendOperation, SectorIndex, best_move},
+    recommendation::{BestMoveInfo, RecommendOperation, SectorIndex, best_move},
     room::{
         GameStage, GameState, GameStateResp, RoomUserOperation, ServerGameState, ServerResp,
         UserLocationSequence, UserResultSummary, UserState,
@@ -227,6 +227,51 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
         loop {
             interval.tick().await;
             let mut state = state.lock().await;
+
+            // 0. act for bot
+            let mut bot_ops = vec![];
+            for (room_id, (gs, ss)) in state.iter_mut_all() {
+                let bot_id = format!("bot-{}", room_id);
+                if gs.status == GameState::Wait(vec![bot_id.clone()]) {
+                    info!("bot at room: {}", room_id);
+
+                    let map_type = gs.map_type.clone();
+                    let start_index = SectorIndex::new(gs.start_index, gs.map_type.sector_count());
+                    let end_index = SectorIndex::new(gs.end_index, gs.map_type.sector_count());
+                    let Some(bot_state) = gs.users.iter().find(|u| u.id == bot_id) else {
+                        continue;
+                    };
+                    let Some(tokens) = ss.user_tokens.get(&bot_id) else {
+                        continue;
+                    };
+                    let Some(choices) = ss.choices.get(&bot_id) else {
+                        continue;
+                    };
+                    let info = BestMoveInfo {
+                        stage: gs.game_stage.clone(),
+                        map_type,
+                        start_index,
+                        end_index,
+                        revealed_sectors: ss.revealed_sector_indexs.clone(),
+                    };
+                    let op = best_move(info, ss.research_clues.clone(), bot_state, tokens, choices);
+                    bot_ops.push((
+                        User {
+                            id: bot_id.clone(),
+                            name: "protocol".to_string(),
+                        },
+                        op,
+                    ));
+                }
+            }
+            for (bot, op) in bot_ops {
+                let result = state.handle_action_op(bot, &op);
+                info!("bot result: {:?}", result);
+                if let Err(e) = result {
+                    tracing::error!("bot error: {:?}", e);
+                    continue;
+                }
+            }
 
             // 1. clean empty game rooms
             let mut clean_room_ids = Vec::new();
@@ -835,51 +880,6 @@ pub fn register_state_manager(state: StateRef, io: SocketIo) {
             }
             for tokens in &updated_tokens {
                 send_each_token(&state, tokens);
-            }
-
-            // 4. act for bot
-            let mut bot_ops = vec![];
-            for (room_id, (gs, ss)) in state.iter_mut_all() {
-                let bot_id = format!("bot-{}", room_id);
-                if gs.status == GameState::Wait(vec![bot_id.clone()]) {
-                    info!("bot at room: {}", room_id);
-                    let stage = gs.game_stage.clone();
-                    let start_index = SectorIndex::new(gs.start_index, gs.map_type.sector_count());
-                    let end_index = SectorIndex::new(gs.end_index, gs.map_type.sector_count());
-                    let Some(bot_state) = gs.users.iter().find(|u| u.id == bot_id) else {
-                        continue;
-                    };
-                    let Some(tokens) = ss.user_tokens.get(&bot_id) else {
-                        continue;
-                    };
-                    let Some(choices) = ss.choices.get(&bot_id) else {
-                        continue;
-                    };
-                    let op = best_move(
-                        stage,
-                        start_index,
-                        end_index,
-                        ss.research_clues.clone(),
-                        bot_state,
-                        tokens,
-                        choices,
-                    );
-                    bot_ops.push((
-                        User {
-                            id: bot_id.clone(),
-                            name: "protocol".to_string(),
-                        },
-                        op,
-                    ));
-                }
-            }
-            for (bot, op) in bot_ops {
-                let result = state.handle_action_op(bot, &op);
-                info!("bot result: {:?}", result);
-                if let Err(e) = result {
-                    tracing::error!("bot error: {:?}", e);
-                    continue;
-                }
             }
         }
     });
