@@ -283,7 +283,7 @@ fn map_candidate_operations(
             return res;
         }
         CandidateOperation::ReadyPublish => {
-            let best_shot = best_shot(info, tokens, choice_filter);
+            let best_shot = best_shot(info, tokens, choice_filter, 0.90);
             let number = match info.map_type {
                 MapType::Standard => 1,
                 MapType::Expert => 2,
@@ -304,24 +304,33 @@ fn map_candidate_operations(
             }];
         }
         CandidateOperation::DoPublish => {
-            let best_shot = best_shot(info, tokens, choice_filter);
-            // let number = match info.map_type {
-            //     MapType::Standard => 1,
-            //     MapType::Expert => 2,
-            // };
-            let ss = best_shot
-                .into_iter()
-                .take(1)
-                .map(|(i, s, _)| (i, s))
-                .collect::<Vec<_>>();
-            if ss.is_empty() {
-                error!("No best shot available for publish, how?");
-                return vec![];
+            for step in 0..9 {
+                let min_rate = 0.90 - step as f64 * 0.09;
+                let dobest = best_shot(info, tokens, choice_filter, 0.1);
+                let ss = dobest
+                    .into_iter()
+                    .take(1)
+                    .map(|(i, s, _)| (i, s))
+                    .collect::<Vec<_>>();
+                if ss.is_empty() {
+                    error!("No best shot available at min_rate: {min_rate}");
+                    continue;
+                }
+                return vec![PossibleMove {
+                    op: Operation::DoPublish(DoPublishOperation {
+                        index: ss[0].0,
+                        sector_type: ss[0].1.clone(),
+                    }),
+                    score: 0.0,
+                    filter_effect: 0.0,
+                    cost: 0,
+                }];
             }
+            // give a whatever result
             return vec![PossibleMove {
                 op: Operation::DoPublish(DoPublishOperation {
-                    index: ss[0].0,
-                    sector_type: ss[0].1.clone(),
+                    index: 1,
+                    sector_type: SectorType::Asteroid,
                 }),
                 score: 0.0,
                 filter_effect: 0.0,
@@ -336,6 +345,7 @@ fn best_shot(
     info: &BestMoveInfo,
     tokens: &[Token],
     choice_filter: &ChoiceFilter,
+    min_rate: f64,
 ) -> Vec<(usize, SectorType, f64)> {
     let usable_token = |t: &Token| !t.placed || t.secret.sector_index == 0;
 
@@ -367,7 +377,7 @@ fn best_shot(
                 .map(|x| (sp.index, x.sector_type.clone(), x.rate))
         })
         .filter(|(_index, sector_type, _rate)| {
-            possible_sector_tokens.contains(sector_type) && *_rate > 0.90
+            possible_sector_tokens.contains(sector_type) && *_rate > min_rate
         })
         .collect::<Vec<_>>();
     best_shot.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
