@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use socketioxide::extract::SocketRef;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     map::{SectorType, validate_index_in_range},
@@ -125,6 +125,10 @@ impl State {
             (Operation::DoPublish(_), GameStage::MeetingPublish) => {}
             (Operation::DoPublish(_) | Operation::Locate(_), GameStage::LastMove) => {}
             _rest => {
+                warn!(
+                    "invalid operation in stage{:?} {:?}",
+                    gs.game_stage, operation
+                );
                 return Err(OpError::InvalidMoveInStage);
             }
         }
