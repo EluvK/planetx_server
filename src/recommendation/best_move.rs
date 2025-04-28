@@ -2,6 +2,7 @@ use crate::{
     map::{ChoiceFilter, Clue, ClueConnection, ClueEnum, MapType, SectorType, Token},
     operation::{
         DoPublishOperation, Operation, ReadyPublishOperation, ResearchOperation, SurveyOperatoin,
+        TargetOperation,
     },
     room::{GameStage, UserState},
 };
@@ -122,7 +123,14 @@ pub fn best_move(
         return Operation::Research(ResearchOperation { index: ClueEnum::A });
     }
     for m in &moves {
-        info!("- {:?} {} {}|c{}", m.op, m.score, m.filter_effect, m.cost);
+        info!(
+            "- w{:.4}|s{:2}|e{:.5}|c{}|{:?}",
+            m.weight(),
+            m.score,
+            m.filter_effect,
+            m.cost,
+            m.op,
+        );
     }
     info!("Best move: {:?}", moves[0].op);
     return moves[0].op.clone();
@@ -163,7 +171,7 @@ impl PossibleMove {
     fn weight(&self) -> f64 {
         // [0-20]
         let effect = self.score + self.filter_effect * 10.0;
-        effect + 1.0 / self.cost as f64
+        (effect + 1.0) / self.cost as f64
     }
 }
 
@@ -217,7 +225,29 @@ fn map_candidate_operations(
                 })
                 .collect::<Vec<_>>();
         }
-        CandidateOperation::Target => {}
+        CandidateOperation::Target => {
+            let mut candidate_index = vec![];
+            let mut st = info.start_index.clone();
+            while st.as_usize() != info.end_index.as_usize() {
+                candidate_index.push(st);
+                st = st.next();
+            }
+            return candidate_index
+                .iter()
+                .map(|index| {
+                    let op = Operation::Target(TargetOperation {
+                        index: index.as_usize(),
+                    });
+                    let filter_effect = choice_filter.effect_target(index.as_usize());
+                    PossibleMove {
+                        op,
+                        score: 0.0, //?
+                        filter_effect,
+                        cost: 4,
+                    }
+                })
+                .collect::<Vec<_>>();
+        }
         CandidateOperation::Research => {
             let researched_index = user_state
                 .moves
@@ -338,7 +368,6 @@ fn map_candidate_operations(
             }];
         }
     }
-    vec![]
 }
 
 fn best_shot(

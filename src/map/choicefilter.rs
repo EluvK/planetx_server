@@ -306,6 +306,30 @@ impl ChoiceFilter {
         1.0 - res
     }
 
+    pub fn effect_target(&self, index: usize) -> f64 {
+        if !self.initialized {
+            return 0.0;
+        }
+
+        let all_possibilities = self.all_possibilities();
+
+        let mut sec_rates = HashMap::<SectorType, f64>::new();
+        for p in all_possibilities.0[index - 1].possibilities.iter() {
+            match &p.sector_type {
+                SectorType::X | SectorType::Space => {
+                    *sec_rates.entry(SectorType::Space).or_insert(0.0) += p.rate
+                }
+                rest => *sec_rates.entry(rest.clone()).or_insert(0.0) += p.rate,
+            }
+        }
+        let mut res = 0.0;
+        for (_k, v) in sec_rates.iter() {
+            res += v * v;
+        }
+
+        1.0 - res
+    }
+
     pub fn effect_research(&self, clue: &Clue) -> f64 {
         if !self.initialized {
             return 0.0;
